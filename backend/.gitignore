@@ -1,0 +1,34 @@
+# Binaries
+event-scraper
+event-scraper-*
+*.exe
+
+# Logs
+logs/
+*.log
+
+# Environment variables
+.env
+
+# Go
+*.out
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+
+# Temporary files
+tmp/
+temp/
+debug_page.html

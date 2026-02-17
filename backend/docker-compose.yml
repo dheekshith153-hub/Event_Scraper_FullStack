@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Dheekshith@15
+      POSTGRES_DB: event_scraper
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  scraper:
+    build: ./backend
+    command: go run cmd/scraper/main.go
+    depends_on:
+      - db
+    env_file: ./backend/.env
+
+  server:                              # ← NEW
+    build: ./backend
+    command: go run cmd/server/main.go
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    env_file: ./backend/.env
+
+  frontend:                            # ← NEW (optional, for prod)
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server
+
+volumes:
+  pgdata:

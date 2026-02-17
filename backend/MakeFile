@@ -1,0 +1,77 @@
+.PHONY: help build run clean test install db-create db-drop logs
+
+# Variables
+BINARY_NAME=event-scraper
+GO_FILES=$(shell find . -name '*.go' -type f)
+
+help: ## Show this help message
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Available targets:'
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+install: ## Install dependencies
+	@echo "📦 Installing dependencies..."
+	go mod download
+	go mod tidy
+	@echo "✅ Dependencies installed"
+
+build: ## Build the application
+	@echo "🔨 Building application..."
+	go build -o $(BINARY_NAME) cmd/scraper/main.go
+	@echo "✅ Build complete: ./$(BINARY_NAME)"
+
+run: ## Run the application
+	@echo "🚀 Running application..."
+	go run cmd/scraper/main.go
+
+clean: ## Clean build artifacts
+	@echo "🧹 Cleaning..."
+	rm -f $(BINARY_NAME)
+	rm -f event-scraper-*
+	rm -rf logs/*.log
+	@echo "✅ Cleaned"
+
+test: ## Run tests
+	@echo "🧪 Running tests..."
+	go test -v ./...
+
+db-create: ## Create PostgreSQL database
+	@echo "📊 Creating database..."
+	createdb event_scraper || echo "Database may already exist"
+	@echo "✅ Database created"
+
+db-drop: ## Drop PostgreSQL database
+	@echo "⚠️  Dropping database..."
+	dropdb event_scraper || echo "Database may not exist"
+	@echo "✅ Database dropped"
+
+db-reset: db-drop db-create ## Reset database
+	@echo "♻️  Database reset complete"
+
+logs: ## View logs
+	@tail -f logs/scraper.log
+
+format: ## Format Go code
+	@echo "🎨 Formatting code..."
+	go fmt ./...
+	@echo "✅ Code formatted"
+
+lint: ## Run linter
+	@echo "🔍 Running linter..."
+	golangci-lint run ./...
+
+build-all: ## Build for all platforms
+	@echo "🔨 Building for all platforms..."
+	GOOS=linux GOARCH=amd64 go build -o $(BINARY_NAME)-linux cmd/scraper/main.go
+	GOOS=windows GOARCH=amd64 go build -o $(BINARY_NAME).exe cmd/scraper/main.go
+	GOOS=darwin GOARCH=amd64 go build -o $(BINARY_NAME)-mac cmd/scraper/main.go
+	@echo "✅ Build complete for all platforms"
+
+docker-build: ## Build Docker image
+	@echo "🐳 Building Docker image..."
+	docker build -t event-scraper:latest .
+
+docker-run: ## Run Docker container
+	@echo "🐳 Running Docker container..."
+	docker-compose up -d
