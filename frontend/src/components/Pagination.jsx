@@ -15,12 +15,28 @@ export default function Pagination({ page, totalPages, onPage }) {
             <button
                 disabled={page === 1}
                 onClick={() => onPage(p => p - 1)}
-                className="px-4 py-2 rounded-xl text-sm font-medium transition-all border"
+                className="px-4 py-2 rounded-xl text-sm font-medium transition-all duration-300 border"
                 style={{
-                    background: "white",
-                    color: page === 1 ? "#ccc" : "#555",
-                    borderColor: "#e2ddd8",
+                    background: page === 1 ? "transparent" : "#fff8f0",
+                    color: page === 1 ? "#1e1e24/30" : "#1e1e24",
+                    borderColor: page === 1 ? "rgba(30, 30, 36, 0.1)" : "rgba(146, 20, 12, 0.2)",
                     cursor: page === 1 ? "not-allowed" : "pointer",
+                    opacity: page === 1 ? 0.5 : 1,
+                    letterSpacing: "0.02em",
+                }}
+                onMouseEnter={(e) => {
+                    if (page !== 1) {
+                        e.currentTarget.style.background = "#92140c";
+                        e.currentTarget.style.color = "#fff8f0";
+                        e.currentTarget.style.borderColor = "#92140c";
+                    }
+                }}
+                onMouseLeave={(e) => {
+                    if (page !== 1) {
+                        e.currentTarget.style.background = "#fff8f0";
+                        e.currentTarget.style.color = "#1e1e24";
+                        e.currentTarget.style.borderColor = "rgba(146, 20, 12, 0.2)";
+                    }
                 }}
             >
                 ← Prev
@@ -28,17 +44,32 @@ export default function Pagination({ page, totalPages, onPage }) {
 
             {pages.map((p, i) =>
                 p === "..." ? (
-                    <span key={`ellipsis-${i}`} className="px-2 text-gray-400 text-sm">...</span>
+                    <span key={`ellipsis-${i}`} className="px-2 text-sm" style={{ color: "#1e1e24", opacity: 0.5 }}>...</span>
                 ) : (
                     <button
                         key={p}
                         onClick={() => onPage(p)}
-                        className="w-9 h-9 rounded-xl text-sm font-medium transition-all border"
+                        className="w-9 h-9 rounded-xl text-sm font-medium transition-all duration-300 border"
                         style={{
-                            background: p === page ? "#e8305a" : "white",
-                            color: p === page ? "white" : "#555",
-                            borderColor: p === page ? "#e8305a" : "#e2ddd8",
-                            boxShadow: p === page ? "0 2px 8px rgba(232,48,90,0.3)" : "none",
+                            background: p === page ? "#92140c" : "#fff8f0",
+                            color: p === page ? "#fff8f0" : "#1e1e24",
+                            borderColor: p === page ? "#92140c" : "rgba(146, 20, 12, 0.2)",
+                            boxShadow: p === page ? "0 4px 12px rgba(146, 20, 12, 0.2)" : "none",
+                            letterSpacing: "0.02em",
+                        }}
+                        onMouseEnter={(e) => {
+                            if (p !== page) {
+                                e.currentTarget.style.background = "rgba(146, 20, 12, 0.05)";
+                                e.currentTarget.style.color = "#92140c";
+                                e.currentTarget.style.borderColor = "#92140c";
+                            }
+                        }}
+                        onMouseLeave={(e) => {
+                            if (p !== page) {
+                                e.currentTarget.style.background = "#fff8f0";
+                                e.currentTarget.style.color = "#1e1e24";
+                                e.currentTarget.style.borderColor = "rgba(146, 20, 12, 0.2)";
+                            }
                         }}
                     >
                         {p}
@@ -49,12 +80,28 @@ export default function Pagination({ page, totalPages, onPage }) {
             <button
                 disabled={page === totalPages}
                 onClick={() => onPage(p => p + 1)}
-                className="px-4 py-2 rounded-xl text-sm font-medium transition-all border"
+                className="px-4 py-2 rounded-xl text-sm font-medium transition-all duration-300 border"
                 style={{
-                    background: "white",
-                    color: page === totalPages ? "#ccc" : "#555",
-                    borderColor: "#e2ddd8",
+                    background: page === totalPages ? "transparent" : "#fff8f0",
+                    color: page === totalPages ? "#1e1e24/30" : "#1e1e24",
+                    borderColor: page === totalPages ? "rgba(30, 30, 36, 0.1)" : "rgba(146, 20, 12, 0.2)",
                     cursor: page === totalPages ? "not-allowed" : "pointer",
+                    opacity: page === totalPages ? 0.5 : 1,
+                    letterSpacing: "0.02em",
+                }}
+                onMouseEnter={(e) => {
+                    if (page !== totalPages) {
+                        e.currentTarget.style.background = "#92140c";
+                        e.currentTarget.style.color = "#fff8f0";
+                        e.currentTarget.style.borderColor = "#92140c";
+                    }
+                }}
+                onMouseLeave={(e) => {
+                    if (page !== totalPages) {
+                        e.currentTarget.style.background = "#fff8f0";
+                        e.currentTarget.style.color = "#1e1e24";
+                        e.currentTarget.style.borderColor = "rgba(146, 20, 12, 0.2)";
+                    }
                 }}
             >
                 Next →

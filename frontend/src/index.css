@@ -2,7 +2,118 @@
 @tailwind components;
 @tailwind utilities;
 
-/* optional: your custom styles below */
 :root {
-    font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    --color-deep: #1e1e24;
+    --color-burgundy: #92140c;
+    --color-cream: #fff8f0;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+    body {
+        @apply antialiased;
+        background-color: var(--color-cream);
+    }
+}
+
+/* Smooth scrolling */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Custom animations */
+@keyframes float {
+
+    0%,
+    100% {
+        transform: translateY(0px);
+    }
+
+    50% {
+        transform: translateY(-8px);
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateX(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes pulse-subtle {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.8;
+    }
+}
+
+.animate-float {
+    animation: float 4s ease-in-out infinite;
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.4s ease-out;
+}
+
+.animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+}
+
+.animate-pulse-subtle {
+    animation: pulse-subtle 2s ease-in-out infinite;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: #fff8f0;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #92140c;
+    border-radius: 5px;
+    border: 2px solid #fff8f0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #1e1e24;
+}
+
+/* Selection color */
+::selection {
+    background: #92140c;
+    color: #fff8f0;
+}
+
+/* Focus styles */
+:focus-visible {
+    outline: 2px solid #92140c;
+    outline-offset: 2px;
 }

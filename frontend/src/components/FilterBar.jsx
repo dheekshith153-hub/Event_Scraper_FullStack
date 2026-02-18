@@ -4,18 +4,19 @@ function FilterPill({ label, active, onClick, children }) {
     return (
         <button
             onClick={onClick}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-150 whitespace-nowrap border"
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 whitespace-nowrap"
             style={{
-                background: active ? "#e8305a" : "white",
-                color: active ? "white" : "#555",
-                borderColor: active ? "#e8305a" : "#e2ddd8",
-                boxShadow: active ? "0 2px 8px rgba(232,48,90,0.25)" : "0 1px 3px rgba(0,0,0,0.06)",
+                background: active ? "#92140c" : "transparent",
+                color: active ? "#fff8f0" : "#1e1e24",
+                border: "1px solid",
+                borderColor: active ? "#92140c" : "rgba(146, 20, 12, 0.2)",
+                letterSpacing: "0.02em",
             }}
         >
             {children || label}
             {active && (
                 <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
                 </svg>
             )}
         </button>
@@ -30,30 +31,36 @@ function DropdownFilter({ label, icon, options, value, onChange, renderLabel }) 
         <div className="relative">
             <button
                 onClick={() => setOpen(o => !o)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-150 border"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300"
                 style={{
-                    background: isActive ? "#e8305a" : "white",
-                    color: isActive ? "white" : "#555",
-                    borderColor: isActive ? "#e8305a" : "#e2ddd8",
-                    boxShadow: isActive ? "0 2px 8px rgba(232,48,90,0.25)" : "0 1px 3px rgba(0,0,0,0.06)",
+                    background: isActive ? "#92140c" : "transparent",
+                    color: isActive ? "#fff8f0" : "#1e1e24",
+                    border: "1px solid",
+                    borderColor: isActive ? "#92140c" : "rgba(146, 20, 12, 0.2)",
+                    letterSpacing: "0.02em",
                 }}
             >
                 {icon && <span>{icon}</span>}
                 <span>{isActive ? (renderLabel ? renderLabel(value) : value) : label}</span>
-                <svg className="w-3.5 h-3.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: isActive ? "#fff8f0" : "#92140c" }}>
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
                 </svg>
             </button>
 
             {open && (
                 <div
-                    className="absolute top-full left-0 mt-2 rounded-xl overflow-hidden z-50 min-w-[160px]"
-                    style={{ background: "white", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", border: "1px solid #ece9e4" }}
+                    className="absolute top-full left-0 mt-2 rounded-xl overflow-hidden z-50 min-w-[160px] animate-fade-in"
+                    style={{
+                        background: "#fff8f0",
+                        boxShadow: "0 20px 40px -20px rgba(30, 30, 36, 0.3), 0 0 0 1px rgba(146, 20, 12, 0.1)",
+                    }}
                 >
                     <button
                         onClick={() => { onChange(""); setOpen(false); }}
-                        className="w-full text-left px-4 py-2.5 text-sm hover:bg-red-50 transition-colors"
-                        style={{ color: "#888", borderBottom: "1px solid #f5f3f0" }}
+                        className="w-full text-left px-4 py-2.5 text-sm transition-colors"
+                        style={{ color: "#1e1e24", borderBottom: "1px solid rgba(146, 20, 12, 0.1)", letterSpacing: "0.02em" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "rgba(146, 20, 12, 0.05)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
                         All {label}
                     </button>
@@ -61,8 +68,14 @@ function DropdownFilter({ label, icon, options, value, onChange, renderLabel }) 
                         <button
                             key={opt}
                             onClick={() => { onChange(opt); setOpen(false); }}
-                            className="w-full text-left px-4 py-2.5 text-sm hover:bg-red-50 transition-colors"
-                            style={{ color: value === opt ? "#e8305a" : "#333", fontWeight: value === opt ? 600 : 400 }}
+                            className="w-full text-left px-4 py-2.5 text-sm transition-colors"
+                            style={{
+                                color: value === opt ? "#92140c" : "#1e1e24",
+                                fontWeight: value === opt ? 500 : 400,
+                                letterSpacing: "0.02em",
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.background = "rgba(146, 20, 12, 0.05)"}
+                            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                         >
                             {opt}
                         </button>
@@ -84,12 +97,9 @@ const SOURCE_LABELS = {
     echai: "Echai",
 };
 
-export default function FilterBar({ filters, onChange, locations, sources, onClear, hasFilters }) {
+export default function FilterBar({ filters = {}, onChange, locations = [], sources = [], onClear, hasFilters }) {
+    const f = { location: "", source: "", dateFrom: "", dateTo: "", ...filters };
     const update = (key, val) => onChange(prev => ({ ...prev, [key]: val }));
-
-    const dateRangeLabel = filters.dateFrom || filters.dateTo
-        ? `${filters.dateFrom || "..."} → ${filters.dateTo || "..."}`
-        : null;
 
     return (
         <div className="flex flex-wrap items-center gap-2 mb-6">
@@ -97,7 +107,7 @@ export default function FilterBar({ filters, onChange, locations, sources, onCle
                 label="Location"
                 icon="📍"
                 options={locations}
-                value={filters.location}
+                value={f.location}
                 onChange={v => update("location", v)}
             />
 
@@ -105,29 +115,43 @@ export default function FilterBar({ filters, onChange, locations, sources, onCle
                 label="Platform"
                 icon="🔗"
                 options={sources}
-                value={filters.source}
+                value={f.source}
                 onChange={v => update("source", v)}
                 renderLabel={v => SOURCE_LABELS[v] || v}
             />
 
             {/* Date range */}
-            <div className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border bg-white" style={{ borderColor: (filters.dateFrom || filters.dateTo) ? "#e8305a" : "#e2ddd8", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
-                <span>📅</span>
+            <div className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border"
+                style={{
+                    background: "transparent",
+                    borderColor: (f.dateFrom || f.dateTo) ? "#92140c" : "rgba(146, 20, 12, 0.2)",
+                    color: "#1e1e24",
+                }}
+            >
+                <span style={{ color: "#92140c" }}>📅</span>
                 <input
                     type="date"
-                    value={filters.dateFrom}
+                    value={f.dateFrom}
                     onChange={e => update("dateFrom", e.target.value)}
                     className="outline-none bg-transparent text-sm"
-                    style={{ color: filters.dateFrom ? "#e8305a" : "#888", width: 120 }}
+                    style={{
+                        color: f.dateFrom ? "#92140c" : "#1e1e24",
+                        width: 120,
+                        opacity: 0.8,
+                    }}
                     title="From date"
                 />
-                <span className="text-gray-300">→</span>
+                <span style={{ color: "rgba(146, 20, 12, 0.3)" }}>—</span>
                 <input
                     type="date"
-                    value={filters.dateTo}
+                    value={f.dateTo}
                     onChange={e => update("dateTo", e.target.value)}
                     className="outline-none bg-transparent text-sm"
-                    style={{ color: filters.dateTo ? "#e8305a" : "#888", width: 120 }}
+                    style={{
+                        color: f.dateTo ? "#92140c" : "#1e1e24",
+                        width: 120,
+                        opacity: 0.8,
+                    }}
                     title="To date"
                 />
             </div>
@@ -136,7 +160,20 @@ export default function FilterBar({ filters, onChange, locations, sources, onCle
                 <button
                     onClick={onClear}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all border"
-                    style={{ color: "#888", borderColor: "#e2ddd8", background: "white" }}
+                    style={{
+                        color: "#1e1e24",
+                        borderColor: "rgba(146, 20, 12, 0.2)",
+                        background: "transparent",
+                        letterSpacing: "0.02em",
+                    }}
+                    onMouseEnter={e => {
+                        e.currentTarget.style.background = "rgba(146, 20, 12, 0.05)";
+                        e.currentTarget.style.color = "#92140c";
+                    }}
+                    onMouseLeave={e => {
+                        e.currentTarget.style.background = "transparent";
+                        e.currentTarget.style.color = "#1e1e24";
+                    }}
                 >
                     Clear filters
                 </button>
