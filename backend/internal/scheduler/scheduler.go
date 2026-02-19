@@ -21,6 +21,7 @@ type Scheduler struct {
 	cron            *cron.Cron
 	logger          *zap.Logger
 	loopCount       int
+	isRunning       bool
 	mu              sync.Mutex
 	stopChan        chan struct{}
 	intervalMinutes int
@@ -63,10 +64,11 @@ func New(
 }
 
 func (s *Scheduler) Start() error {
-	s.logger.Info("Starting scheduler",
+	s.logger.Info("Starting event listing scheduler",
 		zap.Int("interval_minutes", s.intervalMinutes),
 		zap.Int("scraper_count", len(s.scrapers)),
 		zap.String("filter", "upcoming + offline only"),
+		zap.String("note", "Run cmd/detailscraper separately for event details"),
 	)
 
 	go s.runScrapingCycle()
@@ -87,42 +89,69 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) runScrapingCycle() {
+	// Prevent overlapping cycles
 	s.mu.Lock()
+	if s.isRunning {
+		s.mu.Unlock()
+		fmt.Println("⚠️  Skipping cycle — previous cycle still running")
+		return
+	}
+	s.isRunning = true
 	s.loopCount++
 	loop := s.loopCount
 	s.mu.Unlock()
 
+	defer func() {
+		s.mu.Lock()
+		s.isRunning = false
+		s.mu.Unlock()
+	}()
+
 	start := time.Now()
 	statuses := []ScraperStatus{}
+	totalInserted := 0
+	totalFiltered := 0
 
-	totalEvents := 0
+	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
+	fmt.Printf("🔄 SCRAPING CYCLE #%d STARTED at %s\n", loop, start.Format("2006-01-02 15:04:05"))
+	fmt.Printf("%s\n", strings.Repeat("=", 80))
 
+	// Scrape all event listing sources
 	for _, scraper := range s.scrapers {
+		select {
+		case <-s.stopChan:
+			fmt.Println("⚠️  Scheduler stopped mid-cycle")
+			return
+		default:
+		}
+
 		status := s.runScraper(scraper)
 		statuses = append(statuses, status)
 		if status.Success {
-			totalEvents += status.EventsFound
+			totalInserted += status.EventsFound
+			totalFiltered += status.Filtered
 		}
 	}
 
+	// Summary
 	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
-	fmt.Printf("SCRAPING CYCLE #%d COMPLETED\n", loop)
-	fmt.Printf("Duration: %v\n", time.Since(start))
-	fmt.Printf("Filter: UPCOMING + OFFLINE ONLY\n")
-	fmt.Printf("Total Events Inserted: %d\n", totalEvents)
+	fmt.Printf("✅ CYCLE #%d COMPLETED\n", loop)
+	fmt.Printf("   Duration  : %v\n", time.Since(start).Round(time.Second))
+	fmt.Printf("   Inserted  : %d events\n", totalInserted)
+	fmt.Printf("   Filtered  : %d events\n", totalFiltered)
 	fmt.Printf("%s\n", strings.Repeat("-", 80))
 
-	for _, s := range statuses {
+	for _, st := range statuses {
 		icon := "✅"
-		if !s.Success {
+		if !st.Success {
 			icon = "❌"
 		}
-		fmt.Printf("%s %-15s | %d events inserted", icon, s.Name, s.EventsFound)
-		if s.Filtered > 0 {
-			fmt.Printf(" | %d filtered out", s.Filtered)
+		fmt.Printf("  %s %-20s | inserted: %d", icon, st.Name, st.EventsFound)
+		if st.Filtered > 0 {
+			fmt.Printf(" | filtered: %d", st.Filtered)
 		}
-		if s.Error != "" {
-			fmt.Printf(" | %s", s.Error)
+		if st.Error != "" {
+			fmt.Printf(" | error: %s", st.Error)
 		}
 		fmt.Println()
 	}
@@ -136,20 +165,18 @@ func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 
 	events, err := scraper.Scrape(ctx)
 	if err != nil {
+		s.logger.Error("Scraper failed", zap.String("scraper", name), zap.Error(err))
 		return ScraperStatus{Name: name, Error: err.Error()}
 	}
 
-	// Safety filter: remove any remaining online/virtual or past events
 	filtered := 0
 	var cleanEvents []models.Event
 	for _, event := range events {
-		// Double-check: skip online events
 		if !utils.IsOfflineEvent(event.EventType, event.Location, event.EventName) {
 			filtered++
 			continue
 		}
 
-		// Double-check: skip past events using all available date fields
 		dateStr := event.DateTime
 		if dateStr == "" {
 			dateStr = event.Date
@@ -166,6 +193,7 @@ func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 	if len(cleanEvents) > 0 {
 		i, _, err := s.db.InsertBatch(cleanEvents)
 		if err != nil {
+			s.logger.Error("InsertBatch failed", zap.String("scraper", name), zap.Error(err))
 			return ScraperStatus{Name: name, Error: err.Error(), Filtered: filtered}
 		}
 		inserted = i

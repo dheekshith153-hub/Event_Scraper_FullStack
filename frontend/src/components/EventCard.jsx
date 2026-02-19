@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 const SOURCE_LABELS = {
     allevents: "AllEvents",
@@ -10,41 +11,59 @@ const SOURCE_LABELS = {
     hitex: "Hitex",
 };
 
-const SOURCE_COLORS = {
-    allevents: "#92140c",
-    hasgeek: "#1e1e24",
-    meetup: "#92140c",
-    townscript: "#1e1e24",
-    biec: "#92140c",
-    echai: "#1e1e24",
-    hitex: "#92140c",
-};
-
+// Unified date format: "Feb 21, 2026"
 function formatDate(dateStr) {
     if (!dateStr) return "Date TBA";
+
+    // Standard ISO date
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        const d = new Date(dateStr);
-        return d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+        const [year, month, day] = dateStr.split("-").map(Number);
+        const d = new Date(year, month - 1, day);
+        return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     }
-    try {
-        const d = new Date(dateStr);
+
+    // Try parsing other formats
+    const parsed = new Date(dateStr);
+    if (!isNaN(parsed.getTime())) {
+        return parsed.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    }
+
+    // Extract first date from range strings like "17 Feb 2026 - 18 Feb 2026"
+    const rangeMatch = dateStr.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
+    if (rangeMatch) {
+        const d = new Date(`${rangeMatch[2]} ${rangeMatch[1]}, ${rangeMatch[3]}`);
         if (!isNaN(d.getTime())) {
-            return d.toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
+            return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
         }
-    } catch (e) { }
+    }
+
+    // "February 26 - March 01, 2026" style
+    const longMatch = dateStr.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
+    if (longMatch) {
+        const yearMatch = dateStr.match(/\d{4}/);
+        const year = yearMatch ? yearMatch[0] : new Date().getFullYear();
+        const d = new Date(`${longMatch[1]} ${longMatch[2]}, ${year}`);
+        if (!isNaN(d.getTime())) {
+            return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        }
+    }
+
     return dateStr;
 }
 
 export default function EventCard({ event, index }) {
-    const [imgError, setImgError] = useState(false);
     const [hovered, setHovered] = useState(false);
+    const navigate = useNavigate();
 
     const bgColors = ["#1e1e24", "#92140c", "#1e1e24", "#92140c", "#1e1e24", "#92140c"];
     const fallbackBg = bgColors[index % bgColors.length];
 
+    const platformLabel = SOURCE_LABELS[event.platform] || event.platform || "Event";
+    const displayDate = formatDate(event.date || event.date_time);
+
     return (
         <div
-            className="rounded-2xl overflow-hidden flex flex-col cursor-pointer group animate-fade-in"
+            className="rounded-2xl overflow-hidden flex flex-col cursor-pointer"
             style={{
                 background: "#fff8f0",
                 boxShadow: hovered
@@ -55,68 +74,130 @@ export default function EventCard({ event, index }) {
             }}
             onMouseEnter={() => setHovered(true)}
             onMouseLeave={() => setHovered(false)}
+            onClick={() => navigate(`/events/${event.id}`)}
         >
-            {/* Image */}
-            <div className="relative overflow-hidden" style={{ height: 160, background: fallbackBg, flexShrink: 0 }}>
-                {/* Gradient overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-[#1e1e24]/90 via-transparent to-transparent" />
+            {/* Coloured header with platform badge */}
+            <div
+                style={{
+                    height: 140,
+                    background: fallbackBg,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    position: "relative",
+                    overflow: "hidden",
+                }}
+            >
+                {/* Large letter watermark */}
+                <span
+                    style={{
+                        fontFamily: "'Cormorant Garamond', serif",
+                        fontSize: "3rem",
+                        fontWeight: 500,
+                        color: "rgba(255, 248, 240, 0.15)",
+                        userSelect: "none",
+                    }}
+                >
+                    {platformLabel[0]}
+                </span>
 
-                {/* Fallback to initials */}
-                <div className="w-full h-full flex items-center justify-center">
-                    <span className="text-5xl font-light text-[#fff8f0]/20" style={{ fontFamily: "'Cormorant Garamond', 'Inter', serif", letterSpacing: "0.05em" }}>
-                        {event.event_name.slice(0, 2).toUpperCase()}
+                {/* Platform badge */}
+                <div
+                    style={{
+                        position: "absolute",
+                        top: 12,
+                        left: 12,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "4px 10px",
+                        borderRadius: 20,
+                        background: "rgba(255, 248, 240, 0.15)",
+                        backdropFilter: "blur(8px)",
+                        border: "1px solid rgba(255, 248, 240, 0.2)",
+                    }}
+                >
+                    <span
+                        style={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: 4,
+                            background: "#fff8f0",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 9,
+                            fontWeight: 600,
+                            color: fallbackBg,
+                        }}
+                    >
+                        {platformLabel[0]}
+                    </span>
+                    <span style={{ fontSize: 11, fontWeight: 500, color: "#fff8f0", letterSpacing: "0.02em" }}>
+                        {platformLabel}
                     </span>
                 </div>
 
-                {/* Source badge */}
-                <div
-                    className="absolute top-3 left-3 px-3 py-1.5 rounded-lg text-xs font-medium backdrop-blur-md"
-                    style={{
-                        background: "#fff8f0",
-                        color: SOURCE_COLORS[event.platform] || "#92140c",
-                        border: "none",
-                        boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-                        letterSpacing: "0.02em",
-                    }}
-                >
-                    {SOURCE_LABELS[event.platform] || event.platform}
-                </div>
+                {/* Offline badge */}
+                {event.event_type && (
+                    <div
+                        style={{
+                            position: "absolute",
+                            top: 12,
+                            right: 12,
+                            padding: "3px 8px",
+                            borderRadius: 20,
+                            background: "rgba(255, 248, 240, 0.15)",
+                            backdropFilter: "blur(8px)",
+                            fontSize: 10,
+                            fontWeight: 500,
+                            color: "#fff8f0",
+                            border: "1px solid rgba(255, 248, 240, 0.2)",
+                        }}
+                    >
+                        {event.event_type}
+                    </div>
+                )}
             </div>
 
-            {/* Content */}
+            {/* Card body — only date, name, location, button */}
             <div className="flex flex-col flex-1 p-5 gap-3">
                 {/* Date */}
-                <p className="text-xs font-medium tracking-wide" style={{ color: "#92140c" }}>
-                    {event.date ? formatDate(event.date) : (event.date_time ? formatDate(event.date_time) : "Date TBA")}
-                </p>
+                <div className="flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#92140c" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    <span className="text-xs font-medium" style={{ color: "#92140c", letterSpacing: "0.02em" }}>
+                        {displayDate}
+                    </span>
+                </div>
 
                 {/* Title */}
-                <h3 className="font-medium leading-snug line-clamp-2" style={{ color: "#1e1e24", fontSize: "0.95rem", fontFamily: "'Cormorant Garamond', 'Inter', serif", fontSize: "1.1rem", letterSpacing: "-0.01em" }}>
+                <h3
+                    className="font-medium leading-snug line-clamp-2"
+                    style={{
+                        fontFamily: "'Cormorant Garamond', serif",
+                        fontSize: "1.05rem",
+                        color: "#1e1e24",
+                        letterSpacing: "-0.01em",
+                    }}
+                >
                     {event.event_name}
                 </h3>
 
-                {/* Location & Venue */}
-                <div className="flex flex-col gap-1.5">
-                    <div className="flex items-center gap-1.5 text-xs" style={{ color: "#1e1e24" }}>
-                        <svg className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#92140c" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span className="truncate opacity-80">{event.location}</span>
-                    </div>
-                    {event.address && (
-                        <div className="flex items-center gap-1.5 text-xs" style={{ color: "#1e1e24" }}>
-                            <svg className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#92140c" }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-                            </svg>
-                            <span className="truncate opacity-70">{event.address}</span>
-                        </div>
-                    )}
+                {/* Location */}
+                <div className="flex items-center gap-1.5">
+                    <svg className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#1e1e24", opacity: 0.5 }} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    <span className="text-xs truncate" style={{ color: "#1e1e24", opacity: 0.7, letterSpacing: "0.02em" }}>
+                        {event.location || "Location TBA"}
+                    </span>
                 </div>
 
-                {/* View button */}
-                <a
-                    href={event.website}
+                {/* View Details button */}
+                <button
                     className="mt-auto flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-medium transition-all duration-300"
                     style={{
                         background: hovered ? "#92140c" : "transparent",
@@ -125,15 +206,16 @@ export default function EventCard({ event, index }) {
                         color: hovered ? "#fff8f0" : "#1e1e24",
                         letterSpacing: "0.02em",
                     }}
-                    onClick={e => e.stopPropagation()}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/events/${event.id}`);
+                    }}
                 >
                     <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" />
                     </svg>
-                    View event
-                </a>
+                    View Details
+                </button>
             </div>
         </div>
     );

@@ -14,7 +14,7 @@ export default function Pagination({ page, totalPages, onPage }) {
         <div className="flex items-center justify-center gap-2 mt-10">
             <button
                 disabled={page === 1}
-                onClick={() => onPage(p => p - 1)}
+                onClick={() => onPage(page - 1)}
                 className="px-4 py-2 rounded-xl text-sm font-medium transition-all duration-300 border"
                 style={{
                     background: page === 1 ? "transparent" : "#fff8f0",
@@ -79,7 +79,7 @@ export default function Pagination({ page, totalPages, onPage }) {
 
             <button
                 disabled={page === totalPages}
-                onClick={() => onPage(p => p + 1)}
+                onClick={() => onPage(page + 1)}
                 className="px-4 py-2 rounded-xl text-sm font-medium transition-all duration-300 border"
                 style={{
                     background: page === totalPages ? "transparent" : "#fff8f0",

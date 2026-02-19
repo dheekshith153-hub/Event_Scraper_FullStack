@@ -11,6 +11,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	_ "github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
+
+	"event-scraper/internal/scrapers"
+
 )
 
 // ─── JWT Secret ──────────────────────────────────────────────────────────────
@@ -194,6 +198,53 @@ func main() {
 		log.Println("✅ Users table ready (UUID)")
 	}
 
+	// Ensure event_details table
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS event_details (
+		  id               SERIAL PRIMARY KEY,
+		  event_id         INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+		  full_description TEXT,
+		  organizer        VARCHAR(300),
+		  organizer_contact VARCHAR(500),
+		  image_url        VARCHAR(1000),
+		  tags             TEXT,
+		  price            VARCHAR(200),
+		  registration_url VARCHAR(1000),
+		  duration         VARCHAR(100),
+		  agenda_html      TEXT,
+		  speakers_json    TEXT,
+		  prerequisites    TEXT,
+		  max_attendees    INTEGER DEFAULT 0,
+		  attendees_count  INTEGER DEFAULT 0,
+		  last_scraped     TIMESTAMP,
+		  scraped_body     TEXT,
+		  created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+		  updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+		  UNIQUE(event_id)
+		);
+	`); err != nil {
+		log.Printf("⚠️  Could not ensure event_details table: %v", err)
+	} else {
+		log.Println("✅ Event details table ready")
+	}
+
+	// Ensure saved_events table
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS saved_events (
+		  id         SERIAL PRIMARY KEY,
+		  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		  event_id   INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+		  notes      TEXT,
+		  saved_at   TIMESTAMP NOT NULL DEFAULT NOW(),
+		  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+		  UNIQUE(user_id, event_id)
+		);
+	`); err != nil {
+		log.Printf("⚠️  Could not ensure saved_events table: %v", err)
+	} else {
+		log.Println("✅ Saved events table ready")
+	}
+
 	s := &Server{db: db}
 
 	mux := http.NewServeMux()
@@ -203,6 +254,10 @@ func main() {
 	mux.HandleFunc("/api/auth/signup", s.withCORS(s.handleSignup))
 	mux.HandleFunc("/api/auth/signin", s.withCORS(s.handleSignin))
 	mux.HandleFunc("/api/auth/me", s.withCORS(s.handleMe))
+	mux.HandleFunc("/api/events/", s.withCORS(s.handleEventRoutes))
+	mux.HandleFunc("/api/saved-events", s.withCORS(s.requireAuth(s.handleGetSavedEvents)))
+	mux.HandleFunc("/api/scrape/details", s.withCORS(s.handleManualDetailScrape))
+
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -644,3 +699,561 @@ func getEnv(key, fallback string) string {
 	}
 	return fallback
 }
+
+func (s *Server) handleEventRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/events/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 1 {
+		jsonError(w, "Invalid URL", 400)
+		return
+	}
+
+	// Extract event ID
+	eventIDStr := parts[0]
+	_, err := strconv.ParseInt(eventIDStr, 10, 64)
+	if err != nil {
+		jsonError(w, "Invalid event ID", 400)
+		return
+	}
+
+	// Route based on path
+	if len(parts) == 1 {
+		// /api/events/:id
+		s.optionalAuth(s.handleEventDetail)(w, r)
+	} else if len(parts) == 2 {
+		switch parts[1] {
+		case "recommended":
+			// /api/events/:id/recommended
+			s.handleRecommendedEvents(w, r)
+		case "save":
+			// /api/events/:id/save
+			if r.Method == http.MethodPost {
+				s.requireAuth(s.handleSaveEvent)(w, r)
+			} else if r.Method == http.MethodDelete {
+				s.requireAuth(s.handleUnsaveEvent)(w, r)
+			} else {
+				jsonError(w, "Method not allowed", 405)
+			}
+		default:
+			jsonError(w, "Not found", 404)
+		}
+	} else {
+		jsonError(w, "Not found", 404)
+	}
+}
+
+// ─── Context Key for Auth ────────────────────────────────────────────────────
+
+type contextKey string
+
+const userIDKey contextKey = "userID"
+
+// getUserID extracts user ID from request context
+func getUserID(r *http.Request) string {
+	userID, _ := r.Context().Value(userIDKey).(string)
+	return userID
+}
+
+// ─── Auth Middleware ──────────────────────────────────────────────────────────
+
+func (s *Server) optionalAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+			claims, err := parseJWT(tokenStr)
+			if err == nil {
+				if userID, ok := claims["user_id"].(string); ok && userID != "" {
+					ctx := context.WithValue(r.Context(), userIDKey, userID)
+					r = r.WithContext(ctx)
+				}
+			}
+		}
+		next(w, r)
+	}
+}
+
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			jsonError(w, "Unauthorized - No token provided", 401)
+			return
+		}
+
+		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+		claims, err := parseJWT(tokenStr)
+		if err != nil {
+			jsonError(w, "Invalid or expired token", 401)
+			return
+		}
+
+		userID, ok := claims["user_id"].(string)
+		if !ok || userID == "" {
+			jsonError(w, "Invalid token claims", 401)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), userIDKey, userID)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+// ─── Event Detail ────────────────────────────────────────────────────────────
+
+type EventDetail struct {
+	ID               int64  `json:"id"`
+	EventID          int64  `json:"event_id"`
+	FullDescription  string `json:"full_description"`
+	Organizer        string `json:"organizer"`
+	OrganizerContact string `json:"organizer_contact"`
+	ImageURL         string `json:"image_url"`
+	Tags             string `json:"tags"`
+	Price            string `json:"price"`
+	RegistrationURL  string `json:"registration_url"`
+	Duration         string `json:"duration"`
+	AgendaHTML       string `json:"agenda_html"`
+	SpeakersJSON     string `json:"speakers_json"`
+	Prerequisites    string `json:"prerequisites"`
+	MaxAttendees     int    `json:"max_attendees"`
+	AttendeesCount   int    `json:"attendees_count"`
+}
+
+// GET /api/events/:id
+func (s *Server) handleEventDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/events/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 1 || parts[0] == "" {
+		jsonError(w, "Invalid event ID", 400)
+		return
+	}
+
+	eventID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		jsonError(w, "Invalid event ID", 400)
+		return
+	}
+
+	// Get event
+	var e Event
+	err = s.db.QueryRow(`
+		SELECT id, COALESCE(event_name, ''), COALESCE(location, ''),
+		       COALESCE(date_time, ''), COALESCE(date, ''), COALESCE(time, ''),
+		       COALESCE(website, ''), COALESCE(description, ''), COALESCE(address, ''),
+		       COALESCE(event_type, ''), COALESCE(platform, ''), created_at
+		FROM events WHERE id = $1
+	`, eventID).Scan(
+		&e.ID, &e.EventName, &e.Location, &e.DateTime,
+		&e.Date, &e.Time, &e.Website, &e.Description,
+		&e.Address, &e.EventType, &e.Platform, &e.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		jsonError(w, "Event not found", 404)
+		return
+	}
+	if err != nil {
+		jsonError(w, "Database error: "+err.Error(), 500)
+		return
+	}
+
+	// Get event details (may not exist yet)
+	var detail EventDetail
+	err = s.db.QueryRow(`
+		SELECT id, event_id, COALESCE(full_description, ''), COALESCE(organizer, ''),
+		       COALESCE(organizer_contact, ''), COALESCE(image_url, ''), COALESCE(tags, ''),
+		       COALESCE(price, ''), COALESCE(registration_url, ''), COALESCE(duration, ''),
+		       COALESCE(agenda_html, ''), COALESCE(speakers_json, ''), COALESCE(prerequisites, ''),
+		       COALESCE(max_attendees, 0), COALESCE(attendees_count, 0)
+		FROM event_details WHERE event_id = $1
+	`, eventID).Scan(
+		&detail.ID, &detail.EventID, &detail.FullDescription, &detail.Organizer,
+		&detail.OrganizerContact, &detail.ImageURL, &detail.Tags, &detail.Price,
+		&detail.RegistrationURL, &detail.Duration, &detail.AgendaHTML, &detail.SpeakersJSON,
+		&detail.Prerequisites, &detail.MaxAttendees, &detail.AttendeesCount,
+	)
+
+	var detailPtr *EventDetail
+	if err == nil {
+		detailPtr = &detail
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		jsonError(w, "Database error fetching details: "+err.Error(), 500)
+		return
+	}
+
+	// Check if user has saved this event (if authenticated)
+	isSaved := false
+	userID := getUserID(r)
+	if userID != "" {
+		var count int
+		err = s.db.QueryRow(`
+			SELECT COUNT(*) FROM saved_events 
+			WHERE user_id = $1 AND event_id = $2
+		`, userID, eventID).Scan(&count)
+		if err == nil && count > 0 {
+			isSaved = true
+		}
+	}
+
+	// Count recommended events
+	var recommendedCount int
+	s.db.QueryRow(`
+		SELECT COUNT(*) FROM events 
+		WHERE id != $1 AND platform = $2 AND location ILIKE $3
+		LIMIT 10
+	`, eventID, e.Platform, "%"+e.Location+"%").Scan(&recommendedCount)
+
+	jsonOK(w, map[string]interface{}{
+		"event":             e,
+		"event_detail":      detailPtr,
+		"is_saved":          isSaved,
+		"recommended_count": recommendedCount,
+	})
+}
+
+// ─── Recommended Events ──────────────────────────────────────────────────────
+
+// GET /api/events/:id/recommended
+func (s *Server) handleRecommendedEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/events/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 1 || parts[0] == "" {
+		jsonOK(w, map[string]interface{}{"events": []Event{}, "total": 0})
+		return
+	}
+
+	eventID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		jsonOK(w, map[string]interface{}{"events": []Event{}, "total": 0})
+		return
+	}
+
+	// Get the source event for comparison
+	var platform, location string
+	err = s.db.QueryRow(`
+		SELECT COALESCE(platform, ''), COALESCE(location, '') FROM events WHERE id = $1
+	`, eventID).Scan(&platform, &location)
+	if err != nil {
+		jsonOK(w, map[string]interface{}{"events": []Event{}, "total": 0})
+		return
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, COALESCE(event_name, ''), COALESCE(location, ''),
+		       COALESCE(date_time, ''), COALESCE(date, ''), COALESCE(time, ''),
+		       COALESCE(website, ''), COALESCE(description, ''), COALESCE(address, ''),
+		       COALESCE(event_type, ''), COALESCE(platform, ''), created_at
+		FROM events
+		WHERE id != $1
+		  AND (platform = $2 OR location ILIKE $3)
+		ORDER BY 
+			CASE WHEN platform = $2 THEN 0 ELSE 1 END,
+			created_at DESC
+		LIMIT 10
+	`, eventID, platform, "%"+location+"%")
+	if err != nil {
+		jsonOK(w, map[string]interface{}{"events": []Event{}, "total": 0})
+		return
+	}
+	defer rows.Close()
+
+	var events []Event
+	for rows.Next() {
+		var ev Event
+		if err := rows.Scan(
+			&ev.ID, &ev.EventName, &ev.Location, &ev.DateTime,
+			&ev.Date, &ev.Time, &ev.Website, &ev.Description,
+			&ev.Address, &ev.EventType, &ev.Platform, &ev.CreatedAt,
+		); err == nil {
+			events = append(events, ev)
+		}
+	}
+
+	jsonOK(w, map[string]interface{}{
+		"events": events,
+		"total":  len(events),
+	})
+}
+
+// ─── Save / Unsave Events ────────────────────────────────────────────────────
+
+// POST /api/events/:id/save
+func (s *Server) handleSaveEvent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := getUserID(r)
+	if userID == "" {
+		jsonError(w, "Unauthorized", 401)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/events/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 1 {
+		jsonError(w, "Invalid URL", 400)
+		return
+	}
+
+	eventID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		jsonError(w, "Invalid event ID", 400)
+		return
+	}
+
+	// Check if event exists
+	var exists bool
+	err = s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM events WHERE id = $1)", eventID).Scan(&exists)
+	if err != nil || !exists {
+		jsonError(w, "Event not found", 404)
+		return
+	}
+
+	// Parse optional notes
+	var body struct {
+		Notes string `json:"notes"`
+	}
+	if r.Body != nil {
+		json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	// Insert or update saved event
+	_, err = s.db.Exec(`
+		INSERT INTO saved_events (user_id, event_id, notes, saved_at)
+		VALUES ($1, $2, $3, NOW())
+		ON CONFLICT (user_id, event_id) 
+		DO UPDATE SET notes = EXCLUDED.notes, saved_at = NOW()
+	`, userID, eventID, body.Notes)
+
+	if err != nil {
+		jsonError(w, "Failed to save event: "+err.Error(), 500)
+		return
+	}
+
+	jsonOK(w, map[string]interface{}{
+		"message": "Event saved successfully",
+		"saved":   true,
+	})
+}
+
+// DELETE /api/events/:id/save
+func (s *Server) handleUnsaveEvent(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := getUserID(r)
+	if userID == "" {
+		jsonError(w, "Unauthorized", 401)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/events/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 1 {
+		jsonError(w, "Invalid URL", 400)
+		return
+	}
+
+	eventID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		jsonError(w, "Invalid event ID", 400)
+		return
+	}
+
+	result, err := s.db.Exec(`
+		DELETE FROM saved_events 
+		WHERE user_id = $1 AND event_id = $2
+	`, userID, eventID)
+	if err != nil {
+		jsonError(w, "Failed to unsave event: "+err.Error(), 500)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		jsonError(w, "Event was not saved", 404)
+		return
+	}
+
+	jsonOK(w, map[string]interface{}{
+		"message": "Event unsaved successfully",
+		"saved":   false,
+	})
+}
+
+// ─── Get Saved Events ────────────────────────────────────────────────────────
+
+// GET /api/saved-events
+func (s *Server) handleGetSavedEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	userID := getUserID(r)
+	if userID == "" {
+		jsonError(w, "Unauthorized", 401)
+		return
+	}
+
+	rows, err := s.db.Query(`
+		SELECT 
+			se.id, se.event_id, COALESCE(se.notes, ''), se.saved_at,
+			e.id, COALESCE(e.event_name, ''), COALESCE(e.location, ''),
+			COALESCE(e.date_time, ''), COALESCE(e.date, ''), COALESCE(e.time, ''),
+			COALESCE(e.website, ''), COALESCE(e.description, ''), COALESCE(e.address, ''),
+			COALESCE(e.event_type, ''), COALESCE(e.platform, ''), e.created_at
+		FROM saved_events se
+		JOIN events e ON se.event_id = e.id
+		WHERE se.user_id = $1
+		ORDER BY se.saved_at DESC
+	`, userID)
+
+	if err != nil {
+		jsonError(w, "Database error: "+err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	type SavedEventFull struct {
+		ID      int64  `json:"id"`
+		EventID int64  `json:"event_id"`
+		Notes   string `json:"notes"`
+		SavedAt string `json:"saved_at"`
+		Event   Event  `json:"event"`
+	}
+
+	var savedEvents []SavedEventFull
+	for rows.Next() {
+		var se SavedEventFull
+		var ev Event
+		err := rows.Scan(
+			&se.ID, &se.EventID, &se.Notes, &se.SavedAt,
+			&ev.ID, &ev.EventName, &ev.Location, &ev.DateTime,
+			&ev.Date, &ev.Time, &ev.Website, &ev.Description,
+			&ev.Address, &ev.EventType, &ev.Platform, &ev.CreatedAt,
+		)
+		if err != nil {
+			continue
+		}
+		se.Event = ev
+		savedEvents = append(savedEvents, se)
+	}
+
+	jsonOK(w, map[string]interface{}{
+		"saved_events": savedEvents,
+		"total":        len(savedEvents),
+	})
+}
+
+func (s *Server) handleManualDetailScrape(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	fmt.Println("\n🚀 Manual detail scraping triggered...")
+
+	detailScraper := scrapers.NewDetailScraper(s.db, 30*time.Second, 3)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	inserted := 0
+	updated := 0
+	failed := 0
+
+	// ✅ New callback-based signature — saves immediately per event
+	err := detailScraper.Scrape(ctx, func(detail scrapers.ScrapedDetail) error {
+		isNew, err := s.insertOrUpdateEventDetail(detail)
+		if err != nil {
+			fmt.Printf("❌ Failed to save detail for event %d: %v\n", detail.EventID, err)
+			failed++
+			return err
+		}
+		if isNew {
+			inserted++
+		} else {
+			updated++
+		}
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("❌ Scraping failed: %v\n", err)
+		jsonError(w, fmt.Sprintf("Scraping failed: %v", err), 500)
+		return
+	}
+
+	fmt.Printf("💾 Database save results: inserted=%d, updated=%d, failed=%d\n", inserted, updated, failed)
+
+	jsonOK(w, map[string]interface{}{
+		"message":       "Scraping completed",
+		"inserted":      inserted,
+		"updated":       updated,
+		"failed":        failed,
+		"status":        "completed",
+	})
+}
+
+// Insert or update event detail
+func (s *Server) insertOrUpdateEventDetail(detail scrapers.ScrapedDetail) (bool, error) {
+	// Check if exists
+	var exists bool
+	err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM event_details WHERE event_id = $1)", detail.EventID).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+
+	query := `
+		INSERT INTO event_details (
+			event_id, full_description, organizer, organizer_contact,
+			image_url, tags, price, registration_url, duration,
+			agenda_html, speakers_json, prerequisites,
+			max_attendees, attendees_count, last_scraped, scraped_body
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
+		ON CONFLICT (event_id) 
+		DO UPDATE SET
+			full_description = EXCLUDED.full_description,
+			organizer = EXCLUDED.organizer,
+			organizer_contact = EXCLUDED.organizer_contact,
+			image_url = EXCLUDED.image_url,
+			tags = EXCLUDED.tags,
+			price = EXCLUDED.price,
+			registration_url = EXCLUDED.registration_url,
+			duration = EXCLUDED.duration,
+			agenda_html = EXCLUDED.agenda_html,
+			speakers_json = EXCLUDED.speakers_json,
+			prerequisites = EXCLUDED.prerequisites,
+			max_attendees = EXCLUDED.max_attendees,
+			attendees_count = EXCLUDED.attendees_count,
+			last_scraped = NOW(),
+			scraped_body = EXCLUDED.scraped_body,
+			updated_at = NOW()
+	`
+
+	_, err = s.db.Exec(query,
+		detail.EventID, detail.FullDescription, detail.Organizer, detail.OrganizerContact,
+		detail.ImageURL, detail.Tags, detail.Price, detail.RegistrationURL, detail.Duration,
+		detail.AgendaHTML, detail.SpeakersJSON, detail.Prerequisites,
+		detail.MaxAttendees, detail.AttendeesCount, detail.ScrapedBody,
+	)
+
+	return !exists, err
+}
+
+

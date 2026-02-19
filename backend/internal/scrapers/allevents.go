@@ -30,7 +30,7 @@ const (
 	allEventsMaxPages = 12
 
 	// Per request timeout so we don't get "stuck for minutes"
-	allEventsPerRequestTimeout = 12 * time.Second
+	allEventsPerRequestTimeout = 45 * time.Second
 )
 
 var allEventsCategories = []string{
@@ -66,6 +66,13 @@ var techTitleKeywords = []string{
 	"arduino", "raspberry", "embedded", "firmware", "microcontroller",
 	"5g", "quantum", "satellite", "drone", "autonomous", "fintech",
 	"healthtech", "edtech", "saas", "api", "open source",
+	 "meetup", "connect", "networking", "fest", "conclave", "forum",
+    "bootcamp", "sprint", "demo day", "pitch", "product", "devfest",
+    "google i/o", "aws", "azure", "kubernetes", "docker", "linux",
+    "python", "javascript", "golang", "java", "react", "node",
+    "database", "security", "infosec", "pentest", "open source",
+    "makers", "iot", "build", "launch", "product hunt",
+    "3d printing", "cad", "simulation", "robotics", "stem",
 }
 
 var nonTechKeywords = []string{
@@ -109,7 +116,7 @@ func (s *AllEventsScraper) Scrape(ctx context.Context) ([]models.Event, error) {
 			select {
 			case <-ctx.Done():
 				return all, ctx.Err()
-			case <-time.After(time.Duration(2+utils.RandomInt(3)) * time.Second):
+			case <-time.After(time.Duration(5+utils.RandomInt(5)) * time.Second):
 			}
 
 			evs, err := s.scrapeCityCategoryWithViewMore(ctx, city, category)
@@ -494,17 +501,21 @@ func normalizeAllEventsDate(s string) string {
 
 func isTechRelevant(title string) bool {
 	lower := strings.ToLower(title)
+
 	for _, kw := range nonTechKeywords {
 		if strings.Contains(lower, kw) {
 			return false
 		}
 	}
+
 	for _, kw := range techTitleKeywords {
 		if strings.Contains(lower, kw) {
 			return true
 		}
 	}
-	return true
+
+	// ✅ If it doesn't match any tech keyword, treat it as non-tech
+	return false
 }
 
 func isOnlineLocation(location string) bool {

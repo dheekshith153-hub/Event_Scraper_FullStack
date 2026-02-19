@@ -13,31 +13,100 @@ type DB struct {
 	conn *sql.DB
 }
 
-func New(connectionString string) (*DB, error) {
-	conn, err := sql.Open("postgres", connectionString)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	if err := conn.Ping(); err != nil {
+func New(sqlDB *sql.DB) (*DB, error) {
+	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	conn.SetMaxOpenConns(25)
-	conn.SetMaxIdleConns(5)
-	conn.SetConnMaxLifetime(5 * time.Minute)
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxLifetime(5 * time.Minute)
 
-	db := &DB{conn: conn}
-
-	if err := db.Migrate(); err != nil {
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
-	}
-
+	db := &DB{conn: sqlDB}
 	return db, nil
 }
 
 func (db *DB) Close() error {
 	return db.conn.Close()
+}
+
+// GetConn returns the underlying sql.DB connection
+func (db *DB) GetConn() *sql.DB {
+	return db.conn
+}
+
+// Migrate creates/updates database schema
+func (db *DB) Migrate() error {
+	queries := []string{
+		// Events table
+		`CREATE TABLE IF NOT EXISTS events (
+			id SERIAL PRIMARY KEY,
+			event_name TEXT NOT NULL,
+			location TEXT,
+			date_time TEXT,
+			date TEXT,
+			time TEXT,
+			website TEXT,
+			description TEXT,
+			address TEXT,
+			event_type TEXT,
+			platform TEXT NOT NULL,
+			hash TEXT UNIQUE,
+			created_at TIMESTAMP DEFAULT NOW(),
+			updated_at TIMESTAMP DEFAULT NOW()
+		)`,
+		
+		// Event details table
+		`CREATE TABLE IF NOT EXISTS event_details (
+			id SERIAL PRIMARY KEY,
+			event_id INTEGER NOT NULL UNIQUE REFERENCES events(id) ON DELETE CASCADE,
+			full_description TEXT,
+			organizer TEXT,
+			organizer_contact TEXT,
+			image_url TEXT,
+			tags TEXT,
+			price TEXT,
+			registration_url TEXT,
+			duration TEXT,
+			agenda_html TEXT,
+			speakers_json TEXT,
+			prerequisites TEXT,
+			max_attendees INTEGER DEFAULT 0,
+			attendees_count INTEGER DEFAULT 0,
+			last_scraped TIMESTAMP DEFAULT NOW(),
+			scraped_body TEXT,
+			created_at TIMESTAMP DEFAULT NOW(),
+			updated_at TIMESTAMP DEFAULT NOW()
+		)`,
+		
+		// Saved events table
+		`CREATE TABLE IF NOT EXISTS saved_events (
+			id SERIAL PRIMARY KEY,
+			user_id TEXT NOT NULL,
+			event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+			notes TEXT,
+			saved_at TIMESTAMP DEFAULT NOW(),
+			created_at TIMESTAMP DEFAULT NOW(),
+			UNIQUE(user_id, event_id)
+		)`,
+		
+		// Indexes
+		`CREATE INDEX IF NOT EXISTS idx_events_platform ON events(platform)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_hash ON events(hash)`,
+		`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_event_details_event_id ON event_details(event_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_event_details_last_scraped ON event_details(last_scraped)`,
+		`CREATE INDEX IF NOT EXISTS idx_saved_events_user_id ON saved_events(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_saved_events_event_id ON saved_events(event_id)`,
+	}
+
+	for _, query := range queries {
+		if _, err := db.conn.Exec(query); err != nil {
+			return fmt.Errorf("migration failed: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // InsertEvent inserts or updates an event
@@ -103,7 +172,6 @@ func (db *DB) UpdateEvent(id int64, event *models.Event) error {
 func (db *DB) GetStats() (map[string]int, error) {
 	stats := make(map[string]int)
 
-	// FIXED: scan into variable first
 	var total int
 	if err := db.conn.QueryRow("SELECT COUNT(*) FROM events").Scan(&total); err != nil {
 		return nil, err
