@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"event-scraper/internal/models"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/lib/pq"
@@ -55,7 +56,7 @@ func (db *DB) Migrate() error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
+
 		// Event details table
 		`CREATE TABLE IF NOT EXISTS event_details (
 			id SERIAL PRIMARY KEY,
@@ -78,7 +79,7 @@ func (db *DB) Migrate() error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			updated_at TIMESTAMP DEFAULT NOW()
 		)`,
-		
+
 		// Saved events table
 		`CREATE TABLE IF NOT EXISTS saved_events (
 			id SERIAL PRIMARY KEY,
@@ -89,8 +90,8 @@ func (db *DB) Migrate() error {
 			created_at TIMESTAMP DEFAULT NOW(),
 			UNIQUE(user_id, event_id)
 		)`,
-		
-		// Indexes
+
+		// Standard indexes
 		`CREATE INDEX IF NOT EXISTS idx_events_platform ON events(platform)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_hash ON events(hash)`,
 		`CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at DESC)`,
@@ -98,6 +99,12 @@ func (db *DB) Migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_event_details_last_scraped ON event_details(last_scraped)`,
 		`CREATE INDEX IF NOT EXISTS idx_saved_events_user_id ON saved_events(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_saved_events_event_id ON saved_events(event_id)`,
+
+		// ✅ FIX: Unique index on website URL — database-level hard stop against URL duplicates.
+		// Partial index: only applies to non-null, non-empty website values.
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_events_website_unique
+		 ON events(website)
+		 WHERE website IS NOT NULL AND website != ''`,
 	}
 
 	for _, query := range queries {
@@ -109,7 +116,9 @@ func (db *DB) Migrate() error {
 	return nil
 }
 
-// InsertEvent inserts or updates an event
+// InsertEvent inserts or updates a single event with two dedup layers:
+//   - Layer 1: hash match  → update existing row
+//   - Layer 2: website URL match → update existing row (catches date-format hash misses)
 func (db *DB) InsertEvent(event *models.Event) error {
 	event.Normalize()
 	event.GenerateHash()
@@ -118,18 +127,36 @@ func (db *DB) InsertEvent(event *models.Event) error {
 		return fmt.Errorf("invalid event")
 	}
 
+	// Layer 1: hash-based dedup
 	var existingID int64
 	err := db.conn.QueryRow(
 		"SELECT id FROM events WHERE hash = $1",
 		event.Hash,
 	).Scan(&existingID)
-
 	if err == nil {
 		return db.UpdateEvent(existingID, event)
 	} else if err != sql.ErrNoRows {
 		return err
 	}
 
+	// Layer 2: URL-based dedup
+	// Catches cases where the same event was scraped with a different date format,
+	// producing a different hash but pointing to the exact same page.
+	website := strings.TrimSpace(event.Website)
+	if website != "" {
+		err = db.conn.QueryRow(
+			"SELECT id FROM events WHERE website = $1",
+			website,
+		).Scan(&existingID)
+		if err == nil {
+			return db.UpdateEvent(existingID, event)
+		} else if err != sql.ErrNoRows {
+			return err
+		}
+	}
+
+	// Neither hash nor URL matched — safe to insert.
+	// ON CONFLICT (hash) is a last-resort safety net for race conditions.
 	query := `
 		INSERT INTO events (
 			event_name, location, date_time, date, time,
@@ -137,6 +164,17 @@ func (db *DB) InsertEvent(event *models.Event) error {
 			address, created_at, updated_at
 		)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		ON CONFLICT (hash) DO UPDATE SET
+			event_name  = EXCLUDED.event_name,
+			location    = EXCLUDED.location,
+			date_time   = EXCLUDED.date_time,
+			date        = EXCLUDED.date,
+			time        = EXCLUDED.time,
+			website     = EXCLUDED.website,
+			description = EXCLUDED.description,
+			event_type  = EXCLUDED.event_type,
+			address     = EXCLUDED.address,
+			updated_at  = EXCLUDED.updated_at
 		RETURNING id
 	`
 
@@ -157,7 +195,6 @@ func (db *DB) UpdateEvent(id int64, event *models.Event) error {
 			description=$7, event_type=$8, address=$9, updated_at=$10
 		WHERE id=$11
 	`
-
 	_, err := db.conn.Exec(
 		query,
 		event.EventName, event.Location, event.DateTime,
@@ -195,7 +232,10 @@ func (db *DB) GetStats() (map[string]int, error) {
 	return stats, nil
 }
 
-// InsertBatch inserts multiple events in a single transaction
+// InsertBatch inserts multiple events in a single transaction.
+// Dedup layers per event:
+//   - Layer 1: hash conflict → ON CONFLICT DO UPDATE (handled by prepared statement)
+//   - Layer 2: website URL check → UPDATE existing row, skip INSERT
 func (db *DB) InsertBatch(events []models.Event) (int, int, error) {
 	if len(events) == 0 {
 		return 0, 0, nil
@@ -211,7 +251,8 @@ func (db *DB) InsertBatch(events []models.Event) (int, int, error) {
 	skipped := 0
 	now := time.Now()
 
-	stmt, err := tx.Prepare(`
+	// Prepared statement handles hash-based conflicts automatically.
+	insertStmt, err := tx.Prepare(`
 		INSERT INTO events (
 			event_name, location, date_time, date, time,
 			website, description, event_type, platform, hash,
@@ -219,21 +260,34 @@ func (db *DB) InsertBatch(events []models.Event) (int, int, error) {
 		)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 		ON CONFLICT (hash) DO UPDATE SET
-			event_name = EXCLUDED.event_name,
-			location = EXCLUDED.location,
-			date_time = EXCLUDED.date_time,
-			date = EXCLUDED.date,
-			time = EXCLUDED.time,
-			website = EXCLUDED.website,
+			event_name  = EXCLUDED.event_name,
+			location    = EXCLUDED.location,
+			date_time   = EXCLUDED.date_time,
+			date        = EXCLUDED.date,
+			time        = EXCLUDED.time,
+			website     = EXCLUDED.website,
 			description = EXCLUDED.description,
-			event_type = EXCLUDED.event_type,
-			address = EXCLUDED.address,
-			updated_at = EXCLUDED.updated_at
+			event_type  = EXCLUDED.event_type,
+			address     = EXCLUDED.address,
+			updated_at  = EXCLUDED.updated_at
 	`)
 	if err != nil {
 		return 0, 0, err
 	}
-	defer stmt.Close()
+	defer insertStmt.Close()
+
+	// Prepared statement for URL-based updates.
+	updateByURLStmt, err := tx.Prepare(`
+		UPDATE events SET
+			event_name=$1, location=$2, date_time=$3,
+			date=$4, time=$5, description=$6,
+			event_type=$7, address=$8, updated_at=$9
+		WHERE website = $10
+	`)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer updateByURLStmt.Close()
 
 	for _, event := range events {
 		event.Normalize()
@@ -244,7 +298,30 @@ func (db *DB) InsertBatch(events []models.Event) (int, int, error) {
 			continue
 		}
 
-		_, err := stmt.Exec(
+		// Layer 2: URL-based dedup — check if this website already exists.
+		// This catches recurring events where the hash changed (different date scraped)
+		// but the event page URL is identical.
+		website := strings.TrimSpace(event.Website)
+		if website != "" {
+			var existingID int64
+			err := tx.QueryRow(
+				"SELECT id FROM events WHERE website = $1", website,
+			).Scan(&existingID)
+			if err == nil {
+				// URL already in DB — update it in place, don't insert a duplicate.
+				_, _ = updateByURLStmt.Exec(
+					event.EventName, event.Location, event.DateTime,
+					event.Date, event.Time, event.Description,
+					event.EventType, event.Address, now,
+					website,
+				)
+				skipped++
+				continue
+			}
+		}
+
+		// Layer 1: hash conflict handled by ON CONFLICT in the prepared statement.
+		_, err := insertStmt.Exec(
 			event.EventName,
 			event.Location,
 			event.DateTime,
@@ -259,7 +336,6 @@ func (db *DB) InsertBatch(events []models.Event) (int, int, error) {
 			now,
 			now,
 		)
-
 		if err != nil {
 			skipped++
 			continue

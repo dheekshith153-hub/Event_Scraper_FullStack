@@ -106,7 +106,6 @@ func IsUpcoming(dateStr string) bool {
 func IsOfflineEvent(eventType, location, title string) bool {
 	combined := strings.ToLower(eventType + " " + location + " " + title)
 
-	// Check explicit online indicators
 	onlineIndicators := []string{"online", "virtual", "webinar", "web-based", "remote event"}
 	for _, indicator := range onlineIndicators {
 		if strings.Contains(combined, indicator) {
@@ -117,9 +116,30 @@ func IsOfflineEvent(eventType, location, title string) bool {
 	return true
 }
 
+// NormalizeToGMT parses any date string and returns it normalised to UTC/GMT
+// as "2006-01-02" (date-only ISO) ready for DB storage.
+// If parsing fails the original string is returned unchanged so no data is lost.
+func NormalizeToGMT(dateStr string) string {
+	t, ok := ParseDate(dateStr)
+	if !ok {
+		return dateStr
+	}
+	return t.UTC().Format("2006-01-02")
+}
+
+// NormalizeToGMTFull parses any date string and returns a full UTC timestamp
+// "2006-01-02T15:04:05Z" for cases where time precision matters.
+// If parsing fails the original string is returned unchanged.
+func NormalizeToGMTFull(dateStr string) string {
+	t, ok := ParseDate(dateStr)
+	if !ok {
+		return dateStr
+	}
+	return t.UTC().Format("2006-01-02T15:04:05Z")
+}
+
 // cleanDateString removes common noise from date strings.
 func cleanDateString(s string) string {
-	// Remove leading/trailing whitespace and common separators
 	s = strings.TrimSpace(s)
 
 	// Remove ordinal suffixes (1st, 2nd, 3rd, 4th, etc.)
@@ -134,21 +154,17 @@ func cleanDateString(s string) string {
 
 	// If it's a date range like "Feb 17 - Feb 20, 2026", take just the start
 	if idx := strings.Index(s, " - "); idx > 0 {
-		// Try to get year from end part
 		parts := strings.SplitN(s, " - ", 2)
 		startPart := strings.TrimSpace(parts[0])
 
-		// If start part doesn't have a year, try to extract from end part
 		if len(parts) > 1 {
 			endPart := strings.TrimSpace(parts[1])
-			// Extract year from end (last 4 digits that look like a year)
 			for i := len(endPart) - 4; i >= 0; i-- {
 				yearStr := endPart[i : i+4]
-				if yearStr >= "2020" && yearStr <= "2030" {
+				if yearStr >= "2020" && yearStr <= "2035" {
 					if _, err := time.Parse("2006", yearStr); err == nil {
-						// Check if start already has a year
 						hasYear := false
-						for y := 2020; y <= 2030; y++ {
+						for y := 2020; y <= 2035; y++ {
 							if strings.Contains(startPart, fmt.Sprintf("%d", y)) {
 								hasYear = true
 								break

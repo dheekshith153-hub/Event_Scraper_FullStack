@@ -11,14 +11,15 @@ func RemoveDuplicates(events []models.Event) []models.Event {
 	result := make([]models.Event, 0, len(events))
 
 	for _, event := range events {
-		event.Normalize()
-		hash := event.GenerateHash()
+    	event.Normalize()
+    	event.GenerateHash()     // just call it
+    	hash := event.Hash       // then use the stored hash
 
-		if !seen[hash] {
-			seen[hash] = true
-			result = append(result, event)
-		}
-	}
+    	if !seen[hash] {
+        	seen[hash] = true
+        	result = append(result, event)
+    	}
+}
 
 	return result
 }

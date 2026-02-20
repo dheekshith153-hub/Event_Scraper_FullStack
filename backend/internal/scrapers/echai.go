@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
 	"github.com/PuerkitoBio/goquery"
 )
 
@@ -22,9 +23,7 @@ func NewEChaiScraper(timeout time.Duration, retries int) *EChaiScraper {
 	}
 }
 
-func (s *EChaiScraper) Name() string {
-	return "echai"
-}
+func (s *EChaiScraper) Name() string { return "echai" }
 
 func (s *EChaiScraper) Scrape(ctx context.Context) ([]models.Event, error) {
 	resp, err := s.FetchWithRetry(ctx, s.url)
@@ -41,94 +40,136 @@ func (s *EChaiScraper) Scrape(ctx context.Context) ([]models.Event, error) {
 	var events []models.Event
 	baseURL := "https://echai.ventures"
 
-	// Find event containers
 	doc.Find("div.position-relative.border-bottom.pb-1").Each(func(i int, container *goquery.Selection) {
-		// Extract title
+		// ── Title ──────────────────────────────────────────────────
 		title := ""
-		if titleTag := container.Find("h6.event-title"); titleTag.Length() > 0 {
-			title = strings.TrimSpace(titleTag.Text())
+		if t := container.Find("h6.event-title"); t.Length() > 0 {
+			title = strings.TrimSpace(t.Text())
 		}
-
 		if title == "" {
 			return
 		}
 
-		// Extract date (from data-date attribute)
-		rawDate, exists := container.Attr("data-date")
+		// ── Date ───────────────────────────────────────────────────
+		rawDate, _ := container.Attr("data-date")
 		date := ""
-		if exists && rawDate != "" {
-			// Format: 2026-01-01T10:00:00Z -> 2026-01-01
+		if rawDate != "" {
 			parts := strings.Split(rawDate, "T")
 			if len(parts) > 0 {
 				date = parts[0]
 			}
 		}
-
-		// Skip past events
 		if !utils.IsUpcoming(date) {
 			return
 		}
 
-		// Extract link
+		// ── Website link ────────────────────────────────────────────
 		website := ""
-		if linkTag := container.Find("a.stretched-link"); linkTag.Length() > 0 {
-			if href, exists := linkTag.Attr("href"); exists {
-				if strings.HasPrefix(href, "/") {
-					website = baseURL + href
-				} else if strings.HasPrefix(href, "http") {
-					website = href
-				} else {
-					website = baseURL + "/" + href
+		if a := container.Find("a.stretched-link"); a.Length() > 0 {
+			if href, ok := a.Attr("href"); ok {
+				website = resolveURL(baseURL, href)
+			}
+		}
+
+		// ── Unique image per event ──────────────────────────────────
+		// Priority: og/meta image on card → img tag inside container
+		// We store the first img src found; the detail scraper will
+		// fetch the event page and overwrite with higher-resolution img.
+		imageURL := ""
+
+		// 1. img[src] directly inside the card container
+		container.Find("img").EachWithBreak(func(_ int, img *goquery.Selection) bool {
+			if src, ok := img.Attr("src"); ok && src != "" && !strings.Contains(src, "logo") {
+				imageURL = resolveURL(baseURL, src)
+				return false // stop after first useful image
+			}
+			return true
+		})
+
+		// 2. CSS background-image on a div (e.g. event poster)
+		if imageURL == "" {
+			container.Find("[style]").EachWithBreak(func(_ int, el *goquery.Selection) bool {
+				style, _ := el.Attr("style")
+				if idx := strings.Index(style, "url("); idx >= 0 {
+					raw := style[idx+4:]
+					end := strings.Index(raw, ")")
+					if end > 0 {
+						u := strings.Trim(raw[:end], `'"`)
+						if u != "" {
+							imageURL = resolveURL(baseURL, u)
+							return false
+						}
+					}
 				}
-			}
+				return true
+			})
 		}
 
-		// Extract location
+		// ── Location ────────────────────────────────────────────────
 		location := ""
-		address := ""
-		// Look for geography icon and get parent's text
-		if geoIcon := container.Find("svg.bi-geo"); geoIcon.Length() > 0 {
-			if parent := geoIcon.Parent(); parent.Length() > 0 {
-				location = strings.TrimSpace(parent.Text())
+		if geo := container.Find("svg.bi-geo"); geo.Length() > 0 {
+			if p := geo.Parent(); p.Length() > 0 {
+				location = strings.TrimSpace(p.Text())
 			}
 		}
-
-		// If no location found, try alternative selectors
 		if location == "" {
-			if locElem := container.Find("[class*='location'], [class*='venue']"); locElem.Length() > 0 {
-				location = strings.TrimSpace(locElem.Text())
+			if loc := container.Find("[class*='location'],[class*='venue'],[class*='city']"); loc.Length() > 0 {
+				location = strings.TrimSpace(loc.First().Text())
 			}
 		}
-
 		if location == "" {
 			location = "N/A"
 		}
 
-		// Determine event type and skip online events
 		eventType := "Offline"
 		if strings.Contains(strings.ToLower(location), "online") ||
 			strings.Contains(strings.ToLower(title), "online") {
 			eventType = "Online"
 		}
-
-		// Skip online/virtual events
 		if !utils.IsOfflineEvent(eventType, location, title) {
 			return
 		}
 
-		event := models.Event{
-			EventName: title,
-			Date:      date,
-			Location:  location,
-			Address:   address,
-			Website:   website,
-			EventType: "Offline",
-			Platform:  "echai",
+		// ── Build description snippet from any visible text ─────────
+		description := ""
+		if d := container.Find("[class*='description'],[class*='desc'],[class*='summary']"); d.Length() > 0 {
+			description = strings.TrimSpace(d.First().Text())
 		}
 
-		events = append(events, event)
+		// Embed the scraped image URL in Description as a marker so the
+		// detail scraper can persist it into event_details.image_url
+		// without an additional HTTP round-trip.
+		// Format: "[img:https://...]" at the start of description.
+		if imageURL != "" {
+			description = fmt.Sprintf("[img:%s] %s", imageURL, description)
+		}
+
+		events = append(events, models.Event{
+			EventName:   title,
+			Date:        date,
+			Location:    location,
+			Website:     website,
+			Description: strings.TrimSpace(description),
+			EventType:   "Offline",
+			Platform:    "echai",
+		})
 	})
 
 	fmt.Printf("eChai: Found %d upcoming offline events\n", len(events))
 	return events, nil
+}
+
+// resolveURL converts a relative href to an absolute URL.
+func resolveURL(base, href string) string {
+	href = strings.TrimSpace(href)
+	if strings.HasPrefix(href, "http") {
+		return href
+	}
+	if strings.HasPrefix(href, "//") {
+		return "https:" + href
+	}
+	if strings.HasPrefix(href, "/") {
+		return base + href
+	}
+	return base + "/" + href
 }

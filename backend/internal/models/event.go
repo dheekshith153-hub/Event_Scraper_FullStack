@@ -3,7 +3,6 @@ package models
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"strings"
 	"time"
 )
@@ -17,32 +16,39 @@ type Event struct {
 	Time        string    `json:"time"`
 	Website     string    `json:"website"`
 	Description string    `json:"description"`
-	Address     string    `json:"address"`     // Specific venue address
-	EventType   string    `json:"event_type"` // Online/Offline
-	Platform    string    `json:"platform"`   // allevents, biec, hasgeek, etc.
-	Hash        string    `json:"hash"`       // For duplicate detection
+	Address     string    `json:"address"`
+	EventType   string    `json:"event_type"`
+	Platform    string    `json:"platform"`
+	Hash        string    `json:"hash"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// GenerateHash creates a unique hash for duplicate detection
-func (e *Event) GenerateHash() string {
-	// Normalize strings for better duplicate detection
-	name := strings.ToLower(strings.TrimSpace(e.EventName))
-	location := strings.ToLower(strings.TrimSpace(e.Location))
-	platform := strings.ToLower(strings.TrimSpace(e.Platform))
-	date := strings.ToLower(strings.TrimSpace(e.DateTime))
-	if date == "" {
-		date = strings.ToLower(strings.TrimSpace(e.Date))
+// GenerateHash creates a unique hash for duplicate detection.
+// Primary key: website URL (stripped of query params and trailing slash).
+// Fallback (no URL): event name + platform — intentionally excludes date
+// so recurring meetups don't generate a new hash each occurrence.
+func (e *Event) GenerateHash() {
+	var key string
+
+	website := strings.TrimSpace(strings.ToLower(e.Website))
+
+	// Strip query params for a stable URL key
+	if idx := strings.Index(website, "?"); idx != -1 {
+		website = website[:idx]
+	}
+	website = strings.TrimRight(website, "/")
+
+	if website != "" {
+		key = website
+	} else {
+		name := strings.ToLower(strings.TrimSpace(e.EventName))
+		platform := strings.ToLower(strings.TrimSpace(e.Platform))
+		key = name + "|" + platform
 	}
 
-	// Create unique identifier from key fields (include platform for cross-platform dedup)
-	key := fmt.Sprintf("%s|%s|%s|%s", name, location, date, platform)
-
-	// Generate SHA256 hash
-	hash := sha256.Sum256([]byte(key))
-	e.Hash = hex.EncodeToString(hash[:])
-	return e.Hash
+	h := sha256.Sum256([]byte(key))
+	e.Hash = hex.EncodeToString(h[:])
 }
 
 // Normalize cleans and standardizes event data
@@ -58,14 +64,13 @@ func (e *Event) Normalize() {
 	e.EventType = strings.TrimSpace(e.EventType)
 	e.Platform = strings.TrimSpace(e.Platform)
 
-	// Default location to N/A if missing
 	if e.Location == "" {
 		e.Location = "N/A"
 	}
 
-	// Detect event type from location if not set
 	if e.EventType == "" {
-		if strings.Contains(strings.ToLower(e.Location), "online") || strings.Contains(strings.ToLower(e.Address), "online") {
+		if strings.Contains(strings.ToLower(e.Location), "online") ||
+			strings.Contains(strings.ToLower(e.Address), "online") {
 			e.EventType = "Online"
 		} else {
 			e.EventType = "Offline"
