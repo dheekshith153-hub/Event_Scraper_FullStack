@@ -126,18 +126,19 @@ func (s *DetailScraper) Scrape(ctx context.Context, onDetail func(ScrapedDetail)
 
 func (s *DetailScraper) getEventsFromDatabase() ([]EventFromDB, error) {
 	query := `
-		SELECT e.id, e.event_name, e.website, e.platform, e.location
-		FROM events e
-		LEFT JOIN event_details ed ON e.id = ed.event_id
-		WHERE e.website IS NOT NULL 
-		  AND e.website != ''
-		  AND e.website NOT LIKE '%javascript:%'
-		  AND e.website NOT LIKE '%#%'
-		  AND (
-			  ed.id IS NULL 
-			  OR ed.last_scraped < NOW() - INTERVAL '7 days'
-		  )
-		ORDER BY e.created_at DESC
+    SELECT e.id, e.event_name, e.website, e.platform, e.location
+    FROM events e
+    LEFT JOIN event_details ed ON e.id = ed.event_id
+    WHERE e.website IS NOT NULL 
+      AND e.website != ''
+      AND e.website NOT LIKE 'javascript:%'
+      AND e.website != '#'
+      AND e.website NOT LIKE '#%'
+      AND (
+          ed.id IS NULL 
+          OR ed.last_scraped < NOW() - INTERVAL '7 days'
+      )
+    ORDER BY e.created_at DESC
 	`
 
 	rows, err := s.db.Query(query)
@@ -167,9 +168,11 @@ func (s *DetailScraper) scrapeEventDetailPage(ctx context.Context, event EventFr
 	var bodyHTML string
 	var err error
 
-	if strings.ToLower(event.Platform) == "echai" {
-		// Use headless Chrome for eChai — bypasses Cloudflare bot detection
-		bodyHTML, err = s.fetchWithChrome(ctx, event.Website)
+	platform := strings.ToLower(event.Platform)
+
+	// Use headless Chrome for platforms that require JS rendering
+	if platform == "echai" || platform == "townscript" {
+		bodyHTML, err = s.fetchWithChrome(ctx, event.Website, platform)
 		if err != nil {
 			return nil, fmt.Errorf("chrome fetch failed: %w", err)
 		}
@@ -195,7 +198,7 @@ func (s *DetailScraper) scrapeEventDetailPage(ctx context.Context, event EventFr
 	fmt.Printf("   📄 %d bytes\n", len(bodyHTML))
 
 	var detail *ScrapedDetail
-	switch strings.ToLower(event.Platform) {
+	switch platform {
 	case "allevents":
 		detail = s.parseAllEventsDetail(doc, event)
 	case "hasgeek":
@@ -220,12 +223,10 @@ func (s *DetailScraper) scrapeEventDetailPage(ctx context.Context, event EventFr
 }
 
 // fetchWithChrome uses headless Chromium to fully render JavaScript pages.
-// This bypasses Cloudflare bot detection because it runs a real browser.
-// Chrome/Chromium must be installed on the system.
-func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string) (string, error) {
+// Handles both eChai (Cloudflare bypass) and Townscript (Angular SSR + Read More click).
+func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string, platform string) (string, error) {
 	fmt.Printf("   🌐 Chrome: Launching headless browser for %s\n", targetURL)
 
-	// Create a new Chrome instance with realistic options
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
@@ -245,39 +246,77 @@ func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string) (
 	chromeCtx, cancelChrome := chromedp.NewContext(allocCtx)
 	defer cancelChrome()
 
-	// 30 second timeout for page load
-	timeoutCtx, cancelTimeout := context.WithTimeout(chromeCtx, 30*time.Second)
+	timeoutCtx, cancelTimeout := context.WithTimeout(chromeCtx, 45*time.Second)
 	defer cancelTimeout()
 
 	var htmlContent string
 
-	err := chromedp.Run(timeoutCtx,
-		// Navigate to the page
-		chromedp.Navigate(targetURL),
-
-		// Wait for the key eChai content element to appear in DOM
-		// This ensures JavaScript has fully rendered the page
-		chromedp.WaitVisible(`.event_short_description`, chromedp.ByQuery),
-
-		// Small extra wait for any lazy-loaded content
-		chromedp.Sleep(1*time.Second),
-
-		// Get the full rendered HTML
-		chromedp.OuterHTML("html", &htmlContent, chromedp.ByQuery),
-	)
-
-	if err != nil {
-		// WaitVisible timed out — content didn't appear, get whatever HTML we have
-		fmt.Printf("   ⚠️  Chrome WaitVisible failed (%v), getting raw HTML\n", err)
-
-		// Try getting HTML even if wait failed
-		fallbackErr := chromedp.Run(timeoutCtx,
+	if platform == "townscript" {
+		// Townscript is Angular — content renders client-side into #event-info-content.
+		// We also need to click "Read More" to expand the full description.
+		err := chromedp.Run(timeoutCtx,
 			chromedp.Navigate(targetURL),
-			chromedp.Sleep(3*time.Second),
+			chromedp.WaitVisible(`#event-info-content`, chromedp.ByQuery),
+			chromedp.Sleep(1*time.Second),
+			// Click "Read More" button if present to reveal full description
+			chromedp.Evaluate(`
+				(function() {
+					var btns = document.querySelectorAll('button');
+					for (var b of btns) {
+						if (b.innerText && b.innerText.trim().toLowerCase() === 'read more') {
+							b.click();
+							return true;
+						}
+					}
+					return false;
+				})()
+			`, nil),
+			chromedp.Sleep(500*time.Millisecond),
 			chromedp.OuterHTML("html", &htmlContent, chromedp.ByQuery),
 		)
-		if fallbackErr != nil {
-			return "", fmt.Errorf("chrome navigation failed: %w", fallbackErr)
+		if err != nil {
+			fmt.Printf("   ⚠️  Chrome Townscript WaitVisible failed (%v), trying fallback\n", err)
+			fallbackErr := chromedp.Run(timeoutCtx,
+				chromedp.Navigate(targetURL),
+				chromedp.Sleep(4*time.Second),
+				// Still try clicking Read More even in fallback
+				chromedp.Evaluate(`
+					(function() {
+						var btns = document.querySelectorAll('button');
+						for (var b of btns) {
+							if (b.innerText && b.innerText.trim().toLowerCase() === 'read more') {
+								b.click();
+								return true;
+							}
+						}
+						return false;
+					})()
+				`, nil),
+				chromedp.Sleep(500*time.Millisecond),
+				chromedp.OuterHTML("html", &htmlContent, chromedp.ByQuery),
+			)
+			if fallbackErr != nil {
+				return "", fmt.Errorf("chrome navigation failed: %w", fallbackErr)
+			}
+		}
+	} else {
+		// eChai path — bypasses Cloudflare, waits for trix-content
+		err := chromedp.Run(timeoutCtx,
+			chromedp.Navigate(targetURL),
+			chromedp.WaitVisible(`.event_short_description`, chromedp.ByQuery),
+			chromedp.Sleep(1*time.Second),
+			chromedp.OuterHTML("html", &htmlContent, chromedp.ByQuery),
+		)
+		if err != nil {
+			fmt.Printf("   ⚠️  Chrome WaitVisible failed (%v), getting raw HTML\n", err)
+			fallbackErr := chromedp.Run(timeoutCtx,
+				chromedp.Navigate(targetURL),
+				chromedp.Sleep(3*time.Second),
+				chromedp.OuterHTML("html", &htmlContent, chromedp.ByQuery),
+			)
+			if fallbackErr != nil {
+				return "", fmt.Errorf("chrome navigation failed: %w", fallbackErr)
+			}
 		}
 	}
 
@@ -285,7 +324,7 @@ func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string) (
 	return htmlContent, nil
 }
 
-// fetchURL is the standard HTTP fetcher for non-eChai platforms
+// fetchURL is the standard HTTP fetcher for non-JS-heavy platforms
 func (s *DetailScraper) fetchURL(ctx context.Context, targetURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
 	if err != nil {
@@ -409,7 +448,7 @@ func (s *DetailScraper) parseMeetupDetail(doc *goquery.Document, event EventFrom
 func (s *DetailScraper) parseEChaiDetail(doc *goquery.Document, event EventFromDB) *ScrapedDetail {
 	detail := &ScrapedDetail{EventID: event.ID}
 
-	// Primary: the trix-content div (fully rendered by Chrome now)
+	// Primary: the trix-content div (fully rendered by Chrome)
 	if html, err := doc.Find(".event_short_description .trix-content").First().Html(); err == nil && len(strings.TrimSpace(html)) > 20 {
 		detail.FullDescription = sanitizeHTML(html)
 	}
@@ -565,14 +604,41 @@ func (s *DetailScraper) parseHITEXDetail(ctx context.Context, doc *goquery.Docum
 	return detail
 }
 
+// parseTownscriptDetail parses Chrome-rendered Angular HTML from Townscript.
+// By the time this runs, Chrome has already clicked "Read More" to expand the full description.
 func (s *DetailScraper) parseTownscriptDetail(doc *goquery.Document, event EventFromDB) *ScrapedDetail {
 	detail := &ScrapedDetail{EventID: event.ID}
 
-	for _, sel := range []string{".event-description-text", ".description-content"} {
-		if html, err := doc.Find(sel).First().Html(); err == nil && len(strings.TrimSpace(html)) > 50 {
+	// Primary: Angular content container (rendered client-side, expanded by Read More click)
+	if html, err := doc.Find("#event-info-content").First().Html(); err == nil && len(strings.TrimSpace(html)) > 50 {
+		detail.FullDescription = sanitizeHTML(html)
+	}
+
+	// Fallback 1: outer event info wrapper
+	if detail.FullDescription == "" {
+		if html, err := doc.Find(".event-info-body").First().Html(); err == nil && len(strings.TrimSpace(html)) > 50 {
 			detail.FullDescription = sanitizeHTML(html)
-			break
 		}
+	}
+
+	// Fallback 2: og:description meta
+	if detail.FullDescription == "" {
+		if desc, exists := doc.Find("meta[property='og:description']").First().Attr("content"); exists && strings.TrimSpace(desc) != "" {
+			detail.FullDescription = "<p>" + strings.TrimSpace(desc) + "</p>"
+			fmt.Printf("   ℹ️  Townscript: used og:description fallback\n")
+		}
+	}
+
+	// Fallback 3: meta description
+	if detail.FullDescription == "" {
+		if desc, exists := doc.Find("meta[name='description']").First().Attr("content"); exists && strings.TrimSpace(desc) != "" {
+			detail.FullDescription = "<p>" + strings.TrimSpace(desc) + "</p>"
+			fmt.Printf("   ℹ️  Townscript: used meta description fallback\n")
+		}
+	}
+
+	if detail.FullDescription == "" {
+		fmt.Printf("   ⚠️  Townscript: all selectors empty\n")
 	}
 
 	if img, exists := doc.Find("meta[property='og:image']").First().Attr("content"); exists {

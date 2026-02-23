@@ -7,6 +7,10 @@ import (
 	"event-scraper/internal/scrapers"
 	"event-scraper/pkg/utils"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -49,8 +53,8 @@ func New(
 		scrapers.NewHasGeekScraper(timeout, retries),
 		scrapers.NewTownscriptScraper(timeout, retries),
 		scrapers.NewMeetupScraper(timeout, retries),
-		scrapers.NewHITEXScraper(timeout, retries),
 		scrapers.NewEChaiScraper(timeout, retries),
+		// HITEX is scraped by internal/scrapers/hitex.py — see runHitexPython()
 	}
 
 	return &Scheduler{
@@ -89,11 +93,10 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) runScrapingCycle() {
-	// Prevent overlapping cycles
 	s.mu.Lock()
 	if s.isRunning {
 		s.mu.Unlock()
-		fmt.Println("⚠️  Skipping cycle — previous cycle still running")
+		fmt.Println("Skipping cycle — previous still running")
 		return
 	}
 	s.isRunning = true
@@ -113,14 +116,13 @@ func (s *Scheduler) runScrapingCycle() {
 	totalFiltered := 0
 
 	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
-	fmt.Printf("🔄 SCRAPING CYCLE #%d STARTED at %s\n", loop, start.Format("2006-01-02 15:04:05"))
+	fmt.Printf("SCRAPING CYCLE #%d STARTED at %s\n", loop, start.Format("2006-01-02 15:04:05"))
 	fmt.Printf("%s\n", strings.Repeat("=", 80))
 
-	// Scrape all event listing sources
 	for _, scraper := range s.scrapers {
 		select {
 		case <-s.stopChan:
-			fmt.Println("⚠️  Scheduler stopped mid-cycle")
+			fmt.Println("Scheduler stopped mid-cycle")
 			return
 		default:
 		}
@@ -133,18 +135,24 @@ func (s *Scheduler) runScrapingCycle() {
 		}
 	}
 
-	// Summary
+	// HITEX Python scraper
+	hitexStatus := s.runHitexPython()
+	statuses = append(statuses, hitexStatus)
+	if hitexStatus.Success {
+		totalInserted += hitexStatus.EventsFound
+	}
+
 	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
-	fmt.Printf("✅ CYCLE #%d COMPLETED\n", loop)
+	fmt.Printf("CYCLE #%d COMPLETED\n", loop)
 	fmt.Printf("   Duration  : %v\n", time.Since(start).Round(time.Second))
 	fmt.Printf("   Inserted  : %d events\n", totalInserted)
 	fmt.Printf("   Filtered  : %d events\n", totalFiltered)
 	fmt.Printf("%s\n", strings.Repeat("-", 80))
 
 	for _, st := range statuses {
-		icon := "✅"
+		icon := "[OK]"
 		if !st.Success {
-			icon = "❌"
+			icon = "[FAIL]"
 		}
 		fmt.Printf("  %s %-20s | inserted: %d", icon, st.Name, st.EventsFound)
 		if st.Filtered > 0 {
@@ -158,9 +166,95 @@ func (s *Scheduler) runScrapingCycle() {
 	fmt.Printf("%s\n\n", strings.Repeat("=", 80))
 }
 
+// hitexScriptPath returns the absolute path to internal/scrapers/hitex.py.
+// Always resolves from CWD (which is backend/ when running "go run cmd/scraper/main.go").
+func hitexScriptPath() string {
+	// Strategy 1: CWD — reliable when "go run" is executed from backend/
+	if cwd, err := os.Getwd(); err == nil {
+		return filepath.Join(cwd, "internal", "scrapers", "hitex.py")
+	}
+
+	// Strategy 2: relative to this source file
+	// scheduler.go = backend/internal/scheduler/scheduler.go
+	// hitex.py     = backend/internal/scrapers/hitex.py
+	_, filename, _, ok := runtime.Caller(0)
+	if ok {
+		schedulerDir := filepath.Dir(filename)
+		internalDir  := filepath.Dir(schedulerDir)
+		abs, _        := filepath.Abs(filepath.Join(internalDir, "scrapers", "hitex.py"))
+		return abs
+	}
+
+	return filepath.Join("internal", "scrapers", "hitex.py")
+}
+
+// pythonExecutable returns "python" on Windows, "python3" on Unix/Mac.
+func pythonExecutable() string {
+	if runtime.GOOS == "windows" {
+		return "python"
+	}
+	return "python3"
+}
+
+// runHitexPython runs internal/scrapers/hitex.py as a subprocess.
+// Sets PYTHONIOENCODING=utf-8 so Windows cp1252 doesn't cause UnicodeEncodeError.
+func (s *Scheduler) runHitexPython() ScraperStatus {
+	scriptPath := hitexScriptPath()
+	fmt.Printf("  [HITEX Python] %s\n", scriptPath)
+
+	if _, err := os.Stat(scriptPath); err != nil {
+		msg := fmt.Sprintf("hitex.py not found at: %s", scriptPath)
+		fmt.Println(" ", msg)
+		s.logger.Error("HITEX Python scraper not found", zap.String("expected_path", scriptPath))
+		return ScraperStatus{Name: "hitex (python)", Error: msg}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, pythonExecutable(), scriptPath)
+
+	// ── Critical for Windows: force UTF-8 output encoding ────────────────────
+	// Without this, Python on Windows uses cp1252 and crashes on any unicode char.
+	cmd.Env = append(os.Environ(),
+		"PYTHONIOENCODING=utf-8",
+		"PYTHONUTF8=1",
+	)
+
+	output, err := cmd.CombinedOutput()
+	outputStr := strings.TrimSpace(string(output))
+
+	for _, line := range strings.Split(outputStr, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line != "" {
+			fmt.Println("  [hitex-py]", line)
+		}
+	}
+
+	if err != nil {
+		s.logger.Error("HITEX Python scraper failed",
+			zap.Error(err),
+			zap.String("output", outputStr),
+		)
+		return ScraperStatus{Name: "hitex (python)", Error: err.Error()}
+	}
+
+	// Parse "Inserted: N" from Python output
+	inserted := 0
+	for _, line := range strings.Split(outputStr, "\n") {
+		var n int
+		if _, scanErr := fmt.Sscanf(strings.TrimSpace(line), "[DB]    Inserted: %d", &n); scanErr == nil {
+			inserted = n
+			break
+		}
+	}
+
+	return ScraperStatus{Name: "hitex (python)", Success: true, EventsFound: inserted}
+}
+
 func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 	name := scraper.Name()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	events, err := scraper.Scrape(ctx)
