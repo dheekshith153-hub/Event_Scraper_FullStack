@@ -18,7 +18,6 @@ export default function Events() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [locations, setLocations] = useState([]);
-    const [sources, setSources] = useState([]);
 
     // ── Read ALL state from URL so Back button restores it ──
     const search = searchParams.get("q") || "";
@@ -59,8 +58,8 @@ export default function Events() {
     };
     const clearAll = () => setSearchParams({}, { replace: false });
 
-    const hasFilters =
-        search || filters.location || filters.source || filters.dateFrom || filters.dateTo;
+    const hasFilters = !!(search || filters.location || filters.dateFrom || filters.dateTo);
+
 
     useEffect(() => {
         const fetchEvents = async () => {
@@ -87,7 +86,6 @@ export default function Events() {
                 setTotal(data.total || 0);
                 setTotalPages(data.total_pages || 1);
                 setLocations(data.locations || []);
-                setSources(data.sources || []);
             } catch (err) {
                 console.error("Error fetching events:", err);
                 setError(err.message);
@@ -120,10 +118,10 @@ export default function Events() {
                     filters={filters}
                     onChange={setFilters}
                     locations={locations}
-                    sources={sources}
                     onClear={clearAll}
                     hasFilters={hasFilters}
                 />
+                <div style={{ marginBottom: 8 }} />
 
                 {error ? (
                     <div className="text-center py-24" style={{ background: "#fff8f0", borderRadius: 24, border: "1px solid rgba(146, 20, 12, 0.1)" }}>

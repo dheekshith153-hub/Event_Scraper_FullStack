@@ -1,29 +1,7 @@
 import { useState } from "react";
+import DateRangePicker from "./DateRangePicker";
 
-function FilterPill({ label, active, onClick, children }) {
-    return (
-        <button
-            onClick={onClick}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 whitespace-nowrap"
-            style={{
-                background: active ? "#92140c" : "transparent",
-                color: active ? "#fff8f0" : "#1e1e24",
-                border: "1px solid",
-                borderColor: active ? "#92140c" : "rgba(146, 20, 12, 0.2)",
-                letterSpacing: "0.02em",
-            }}
-        >
-            {children || label}
-            {active && (
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-            )}
-        </button>
-    );
-}
-
-function DropdownFilter({ label, icon, options, value, onChange, renderLabel }) {
+function DropdownFilter({ label, icon, options, value, onChange }) {
     const [open, setOpen] = useState(false);
     const isActive = !!value;
 
@@ -41,15 +19,16 @@ function DropdownFilter({ label, icon, options, value, onChange, renderLabel }) 
                 }}
             >
                 {icon && <span>{icon}</span>}
-                <span>{isActive ? (renderLabel ? renderLabel(value) : value) : label}</span>
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ color: isActive ? "#fff8f0" : "#92140c" }}>
+                <span>{isActive ? value : label}</span>
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"
+                    style={{ color: isActive ? "#fff8f0" : "#92140c" }}>
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 9l-7 7-7-7" />
                 </svg>
             </button>
 
             {open && (
                 <div
-                    className="absolute top-full left-0 mt-2 rounded-xl overflow-hidden z-50 min-w-[160px] animate-fade-in"
+                    className="absolute top-full left-0 mt-2 rounded-xl overflow-hidden z-50 min-w-[160px]"
                     style={{
                         background: "#fff8f0",
                         boxShadow: "0 20px 40px -20px rgba(30, 30, 36, 0.3), 0 0 0 1px rgba(146, 20, 12, 0.1)",
@@ -62,7 +41,7 @@ function DropdownFilter({ label, icon, options, value, onChange, renderLabel }) 
                         onMouseEnter={e => e.currentTarget.style.background = "rgba(146, 20, 12, 0.05)"}
                         onMouseLeave={e => e.currentTarget.style.background = "transparent"}
                     >
-                        All {label}
+                        All {label}s
                     </button>
                     {options.map(opt => (
                         <button
@@ -88,21 +67,16 @@ function DropdownFilter({ label, icon, options, value, onChange, renderLabel }) 
     );
 }
 
-const SOURCE_LABELS = {
-    allevents: "AllEvents",
-    hasgeek: "HasGeek",
-    meetup: "Meetup",
-    townscript: "Townscript",
-    biec: "BIEC",
-    echai: "Echai",
-};
-
-export default function FilterBar({ filters = {}, onChange, locations = [], sources = [], onClear, hasFilters }) {
-    const f = { location: "", source: "", dateFrom: "", dateTo: "", ...filters };
+export default function FilterBar({ filters = {}, onChange, locations = [], onClear, hasFilters }) {
+    const f = { location: "", dateFrom: "", dateTo: "", ...filters };
     const update = (key, val) => onChange(prev => ({ ...prev, [key]: val }));
 
+    const handleDateChange = ({ dateFrom, dateTo }) => {
+        onChange(prev => ({ ...prev, dateFrom, dateTo }));
+    };
+
     return (
-        <div className="flex flex-wrap items-center gap-2 mb-6">
+        <div className="flex flex-wrap items-center gap-2 mb-8">
             <DropdownFilter
                 label="Location"
                 icon="📍"
@@ -111,50 +85,11 @@ export default function FilterBar({ filters = {}, onChange, locations = [], sour
                 onChange={v => update("location", v)}
             />
 
-            <DropdownFilter
-                label="Platform"
-                icon="🔗"
-                options={sources}
-                value={f.source}
-                onChange={v => update("source", v)}
-                renderLabel={v => SOURCE_LABELS[v] || v}
+            <DateRangePicker
+                dateFrom={f.dateFrom}
+                dateTo={f.dateTo}
+                onChange={handleDateChange}
             />
-
-            {/* Date range */}
-            <div className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium border"
-                style={{
-                    background: "transparent",
-                    borderColor: (f.dateFrom || f.dateTo) ? "#92140c" : "rgba(146, 20, 12, 0.2)",
-                    color: "#1e1e24",
-                }}
-            >
-                <span style={{ color: "#92140c" }}>📅</span>
-                <input
-                    type="date"
-                    value={f.dateFrom}
-                    onChange={e => update("dateFrom", e.target.value)}
-                    className="outline-none bg-transparent text-sm"
-                    style={{
-                        color: f.dateFrom ? "#92140c" : "#1e1e24",
-                        width: 120,
-                        opacity: 0.8,
-                    }}
-                    title="From date"
-                />
-                <span style={{ color: "rgba(146, 20, 12, 0.3)" }}>—</span>
-                <input
-                    type="date"
-                    value={f.dateTo}
-                    onChange={e => update("dateTo", e.target.value)}
-                    className="outline-none bg-transparent text-sm"
-                    style={{
-                        color: f.dateTo ? "#92140c" : "#1e1e24",
-                        width: 120,
-                        opacity: 0.8,
-                    }}
-                    title="To date"
-                />
-            </div>
 
             {hasFilters && (
                 <button

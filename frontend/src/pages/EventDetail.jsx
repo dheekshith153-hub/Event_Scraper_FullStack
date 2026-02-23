@@ -281,7 +281,7 @@ export default function EventDetail() {
         setLoading(true); setError(null); setHeroImgErr(false);
         (async () => {
             try {
-                const token = localStorage.getItem("token");
+                const token = localStorage.getItem("event_token");
                 const headers = { "Content-Type": "application/json" };
                 if (token) headers["Authorization"] = `Bearer ${token}`;
                 const res = await fetch(`${API_BASE_URL}/api/events/${id}`, { headers });
