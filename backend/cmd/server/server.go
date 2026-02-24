@@ -25,32 +25,194 @@ import (
 
 var jwtSecret = []byte(getEnv("JWT_SECRET", "event-scraper-secret-key-change-me"))
 
-// ─── City Mapping ─────────────────────────────────────────────────────────────
 
 var cityKeywords = []struct {
 	keyword string
 	display string
 }{
-	{"new delhi", "New Delhi"},
+	// ── Bengaluru ─────────────────────────────────────────────────────────
 	{"bengaluru", "Bengaluru"},
 	{"bangalore", "Bengaluru"},
+	{"koramangala", "Bengaluru"},
+	{"indiranagar", "Bengaluru"},
+	{"whitefield", "Bengaluru"},
+	{"hsr layout", "Bengaluru"},
+	{"hsr", "Bengaluru"},
+	{"marathahalli", "Bengaluru"},
+	{"hebbal", "Bengaluru"},
+	{"electronic city", "Bengaluru"},
+	{"jp nagar", "Bengaluru"},
+	{"jayanagar", "Bengaluru"},
+	{"malleswaram", "Bengaluru"},
+	{"yelahanka", "Bengaluru"},
+	{"devanahalli", "Bengaluru"},
+	{"bellandur", "Bengaluru"},
+	{"sarjapur", "Bengaluru"},
+	{"domlur", "Bengaluru"},
+	{"btm layout", "Bengaluru"},
+	{"btm", "Bengaluru"},
+	{"mg road", "Bengaluru"},
+	{"ulsoor", "Bengaluru"},
+	{"kaikondrahalli", "Bengaluru"},
+	{"jakkur", "Bengaluru"},
+	{"rajajinagar", "Bengaluru"},
+	{"yeshwanthpur", "Bengaluru"},
+	{"peenya", "Bengaluru"},
+	{"biec", "Bengaluru"},
+	{"bangalore international exhibition", "Bengaluru"},
+	{"ktpo", "Bengaluru"},
+	{"nimhans convention", "Bengaluru"},
+	{"draper startup", "Bengaluru"},
+	{"91springboard", "Bengaluru"},
+	{"wework galaxy", "Bengaluru"},
+
+	// ── Mumbai ────────────────────────────────────────────────────────────
 	{"mumbai", "Mumbai"},
+	{"bombay", "Mumbai"},
+	{"andheri", "Mumbai"},
+	{"bandra", "Mumbai"},
+	{"powai", "Mumbai"},
+	{"lower parel", "Mumbai"},
+	{"goregaon", "Mumbai"},
+	{"malad", "Mumbai"},
+	{"borivali", "Mumbai"},
+	{"thane", "Mumbai"},
+	{"navi mumbai", "Mumbai"},
+	{"worli", "Mumbai"},
+	{"dadar", "Mumbai"},
+	{"juhu", "Mumbai"},
+	{"kurla", "Mumbai"},
+	{"vikhroli", "Mumbai"},
+	{"mulund", "Mumbai"},
+	{"bkc", "Mumbai"},
+	{"bandra kurla", "Mumbai"},
+	{"kandivali", "Mumbai"},
+	{"chembur", "Mumbai"},
+	{"ghatkopar", "Mumbai"},
+	{"nesco", "Mumbai"},
+	{"bombay exhibition", "Mumbai"},
+	{"nehru centre", "Mumbai"},
+	{"nsci dome", "Mumbai"},
+	{"world trade centre", "Mumbai"},
+	{"jio world", "Mumbai"},
+
+	// ── Hyderabad ─────────────────────────────────────────────────────────
 	{"hyderabad", "Hyderabad"},
-	{"kolkata", "Kolkata"},
-	{"calcutta", "Kolkata"},
-	{"chennai", "Chennai"},
-	{"madras", "Chennai"},
+	{"gachibowli", "Hyderabad"},
+	{"hitech city", "Hyderabad"},
+	{"hitec city", "Hyderabad"},
+	{"madhapur", "Hyderabad"},
+	{"banjara hills", "Hyderabad"},
+	{"jubilee hills", "Hyderabad"},
+	{"kondapur", "Hyderabad"},
+	{"miyapur", "Hyderabad"},
+	{"secunderabad", "Hyderabad"},
+	{"kukatpally", "Hyderabad"},
+	{"begumpet", "Hyderabad"},
+	{"manikonda", "Hyderabad"},
+	{"nanakramguda", "Hyderabad"},
+	{"durgam cheruvu", "Hyderabad"},
+	{"financial district", "Hyderabad"},
+	{"hitex", "Hyderabad"},
+	{"hitex exhibition", "Hyderabad"},
+	{"hyderabad international convention", "Hyderabad"},
+	{"hicc", "Hyderabad"},
+	{"novotel hyderabad", "Hyderabad"},
+	{"cokarma", "Hyderabad"},
+	{"t-hub", "Hyderabad"},
+	{"t hub", "Hyderabad"},
+
+	// ── Pune ──────────────────────────────────────────────────────────────
 	{"pune", "Pune"},
-	{"ahmedabad", "Ahmedabad"},
-	{"jaipur", "Jaipur"},
+	{"koregaon park", "Pune"},
+	{"viman nagar", "Pune"},
+	{"hinjewadi", "Pune"},
+	{"wakad", "Pune"},
+	{"kothrud", "Pune"},
+	{"baner", "Pune"},
+	{"aundh", "Pune"},
+	{"hadapsar", "Pune"},
+	{"kharadi", "Pune"},
+	{"magarpatta", "Pune"},
+	{"shivajinagar", "Pune"},
+	{"ideas to impacts", "Pune"},
+
+	// ── Delhi / NCR ───────────────────────────────────────────────────────
+	{"new delhi", "New Delhi"},
 	{"delhi", "New Delhi"},
+	{"connaught place", "New Delhi"},
+	{"aerocity", "New Delhi"},
+	{"nehru place", "New Delhi"},
+	{"karol bagh", "New Delhi"},
+	{"vasant kunj", "New Delhi"},
+	{"dwarka", "New Delhi"},
+	{"rohini", "New Delhi"},
+	{"saket", "New Delhi"},
+	{"hauz khas", "New Delhi"},
+	{"india expo mart", "New Delhi"},
+	{"pragati maidan", "New Delhi"},
+	{"bharat mandapam", "New Delhi"},
+	{"yashobhoomi", "New Delhi"},
+
+	// ── Noida ─────────────────────────────────────────────────────────────
 	{"noida", "Noida"},
+	{"greater noida", "Noida"},
+	{"india expo centre", "Noida"},
+
+	// ── Gurugram ──────────────────────────────────────────────────────────
 	{"gurugram", "Gurugram"},
 	{"gurgaon", "Gurugram"},
+	{"cyber hub", "Gurugram"},
+	{"cyberhub", "Gurugram"},
+	{"cyber city", "Gurugram"},
+	{"dlf cyber", "Gurugram"},
+	{"sohna road", "Gurugram"},
+	{"golf course road", "Gurugram"},
+
+	// ── Chennai ───────────────────────────────────────────────────────────
+	{"chennai", "Chennai"},
+	{"madras", "Chennai"},
+	{"t nagar", "Chennai"},
+	{"anna nagar", "Chennai"},
+	{"velachery", "Chennai"},
+	{"adyar", "Chennai"},
+	{"nungambakkam", "Chennai"},
+	{"sholinganallur", "Chennai"},
+	{"perungudi", "Chennai"},
+	{"tidel park", "Chennai"},
+
+	// ── Kolkata ───────────────────────────────────────────────────────────
+	{"kolkata", "Kolkata"},
+	{"calcutta", "Kolkata"},
+	{"salt lake", "Kolkata"},
+	{"new town kolkata", "Kolkata"},
+	{"rajarhat", "Kolkata"},
+	{"park street", "Kolkata"},
+	{"sector v", "Kolkata"},
+
+	// ── Ahmedabad ─────────────────────────────────────────────────────────
+	{"ahmedabad", "Ahmedabad"},
+	{"sg highway", "Ahmedabad"},
+	{"cg road", "Ahmedabad"},
+	{"navrangpura", "Ahmedabad"},
+	{"prahlad nagar", "Ahmedabad"},
+	{"bodakdev", "Ahmedabad"},
+
+	// ── Jaipur ────────────────────────────────────────────────────────────
+	{"jaipur", "Jaipur"},
+	{"malviya nagar jaipur", "Jaipur"},
+	{"vaishali nagar", "Jaipur"},
+	{"sitapura", "Jaipur"},
+	{"jecc", "Jaipur"},
+
+	// ── Online ────────────────────────────────────────────────────────────
 	{"online", "Online"},
 	{"virtual", "Online"},
 	{"remote", "Online"},
+	{"zoom", "Online"},
+	{"webinar", "Online"},
 }
+
 
 func extractCity(location string) string {
 	lower := strings.ToLower(location)
@@ -540,15 +702,28 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			COALESCE(e.platform, '')    AS platform,
 			COALESCE(ed.image_url, '')  AS image_url,
 			e.created_at
-		FROM events e
+		FROM (
+			SELECT inner_e.*,
+				ROW_NUMBER() OVER (
+					PARTITION BY inner_e.platform
+					ORDER BY
+						CASE WHEN inner_e.date ~ '^\d{4}-\d{2}-\d{2}$'
+							THEN inner_e.date::date
+							ELSE CURRENT_DATE + INTERVAL '100 years'
+						END ASC,
+						inner_e.created_at DESC
+				) AS platform_rank
+			FROM events inner_e
+			%s
+		) e
 		LEFT JOIN event_details ed ON e.id = ed.event_id
-		%s
 		ORDER BY
-			CASE
-				WHEN e.date ~ '^\d{4}-\d{2}-\d{2}$' THEN e.date::date
+			e.platform_rank ASC,
+			CASE WHEN e.date ~ '^\d{4}-\d{2}-\d{2}$'
+				THEN e.date::date
 				ELSE CURRENT_DATE + INTERVAL '100 years'
 			END ASC,
-			e.created_at DESC
+			e.platform ASC
 		LIMIT $%d OFFSET $%d
 	`, where, idx, idx+1)
 

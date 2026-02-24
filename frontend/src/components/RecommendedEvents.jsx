@@ -13,27 +13,77 @@ const SOURCE_LABELS = {
     hitex: "Hitex",
 };
 
-const PLATFORM_COLORS = {
-    allevents: "#92140c",
-    hasgeek: "#1e1e24",
-    meetup: "#92140c",
-    townscript: "#1e1e24",
-    biec: "#92140c",
-    echai: "#1e1e24",
-    hitex: "#5c2d1e",
+// ── Same curated Unsplash pools as EventCard ──────────────────────────────
+const POOL_NETWORKING = [
+    "https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1528605248644-14dd04022da1?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1475721027785-f74eccf877e2?w=400&h=220&fit=crop&auto=format",
+];
+
+const POOL_CONFERENCE = [
+    "https://images.unsplash.com/photo-1587825140708-dfaf72ae4b04?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1559223607-b4d0555ae227?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1517048676732-d65bc937f952?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1582192730841-2a682d7375f9?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1573164713714-d95e436ab8d6?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1561489413-985b06da5bee?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1511578314322-379afb476865?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1464207687429-7505649dae38?w=400&h=220&fit=crop&auto=format",
+];
+
+const POOL_TECH = [
+    "https://images.unsplash.com/photo-1531297484001-80022131f5a1?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1563770660941-20978e870e26?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=400&h=220&fit=crop&auto=format",
+];
+
+const POOL_EXPO = [
+    "https://images.unsplash.com/photo-1587168501724-e9354f88e7cb?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1544531585-9847b68c8c86?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1497366216548-37526070297c?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1542744094-3a31f272c490?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1526566661780-1a67ea3c863e?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1560439513-74b037a25d84?w=400&h=220&fit=crop&auto=format",
+];
+
+const PLATFORM_POOL = {
+    echai: POOL_NETWORKING,
+    meetup: POOL_NETWORKING,
+    hasgeek: POOL_TECH,
+    allevents: POOL_CONFERENCE,
+    townscript: POOL_CONFERENCE,
+    biec: POOL_EXPO,
+    hitex: POOL_EXPO,
 };
 
-// ── Date: "Feb 21, 2026" — always UTC ───────────────────────────
+// Deterministic — same event always gets same image, matching EventCard
+function getEventImage(event) {
+    const pool = PLATFORM_POOL[event.platform] || POOL_CONFERENCE;
+    const idx = Math.abs(event.id || 0) % pool.length;
+    return pool[idx];
+}
+
+// ── Date formatter ────────────────────────────────────────────────────────
 function formatDateCard(dateStr) {
     if (!dateStr) return "Date TBA";
-
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
         const [y, m, d] = dateStr.split("-").map(Number);
         return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
             month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
         });
     }
-
     if (/^\d{4}-\d{2}-\d{2}T/.test(dateStr)) {
         const d = new Date(dateStr);
         if (!isNaN(d.getTime()))
@@ -41,7 +91,6 @@ function formatDateCard(dateStr) {
                 month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
             });
     }
-
     const rm = dateStr.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
     if (rm) {
         const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -51,11 +100,10 @@ function formatDateCard(dateStr) {
                 month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
             });
     }
-
     return dateStr;
 }
 
-// ── Same deterministic SVG as EventCard ─────────────────────────
+// ── Fallback SVG (only used if Unsplash also fails) ───────────────────────
 function buildSVG(eventName = "", eventId = 0) {
     let hash = (eventId * 2654435761) >>> 0;
     for (let i = 0; i < eventName.length; i++)
@@ -89,15 +137,17 @@ function buildSVG(eventName = "", eventId = 0) {
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.trim())}`;
 }
 
-// ── Single recommended card — no platform or event_type badges ───
+// ── Single recommended card ───────────────────────────────────────────────
 function RecommendedCard({ event }) {
     const [hovered, setHovered] = useState(false);
     const [imgError, setImgError] = useState(false);
     const navigate = useNavigate();
 
     const displayDate = formatDateCard(event.date || event.date_time);
-    const realImg = event.image_url || null;
-    const headerImg = (realImg && !imgError) ? realImg : buildSVG(event.event_name, event.id);
+
+    // Use curated pool image (same as EventCard), fall back to SVG only on error
+    const curatedImg = getEventImage(event);
+    const headerImg = imgError ? buildSVG(event.event_name, event.id) : curatedImg;
 
     return (
         <div
@@ -114,14 +164,24 @@ function RecommendedCard({ event }) {
             onMouseLeave={() => setHovered(false)}
             onClick={() => navigate(`/events/${event.id}`)}
         >
-            {/* Header image — no badges */}
+            {/* Header image */}
             <div style={{ height: 140, position: "relative", overflow: "hidden", flexShrink: 0 }}>
                 <img
                     src={headerImg}
                     alt={event.event_name}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    style={{
+                        width: "100%", height: "100%",
+                        objectFit: "cover", display: "block",
+                        transition: "transform 0.5s ease",
+                        transform: hovered ? "scale(1.06)" : "scale(1)",
+                    }}
                     onError={() => setImgError(true)}
                 />
+                <div style={{
+                    position: "absolute", bottom: 0, left: 0, right: 0,
+                    height: 40,
+                    background: "linear-gradient(to top, rgba(255,248,240,0.4), transparent)",
+                }} />
             </div>
 
             {/* Card body */}
@@ -185,7 +245,7 @@ function RecommendedCard({ event }) {
     );
 }
 
-// ── Main export — limit prop caps how many cards are shown ───────
+// ── Main export ───────────────────────────────────────────────────────────
 export default function RecommendedEvents({ eventId, limit = 4 }) {
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -218,7 +278,6 @@ export default function RecommendedEvents({ eventId, limit = 4 }) {
 
     return (
         <div className="mt-12">
-            {/* Section header */}
             <div className="mb-6">
                 <p className="text-xs font-medium tracking-[0.2em] mb-1"
                     style={{ color: "#92140c", opacity: 0.8 }}>MORE LIKE THIS</p>
@@ -232,7 +291,6 @@ export default function RecommendedEvents({ eventId, limit = 4 }) {
                 <div style={{ width: 40, height: 1, background: "#92140c", marginTop: 8, opacity: 0.3 }} />
             </div>
 
-            {/* 4-column grid, capped at limit (default 4) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
                 {events.slice(0, limit).map((event) => (
                     <RecommendedCard key={event.id} event={event} />

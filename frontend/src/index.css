@@ -86,32 +86,6 @@ html {
     animation: pulse-subtle 2s ease-in-out infinite;
 }
 
-/* Custom scrollbar */
-::-webkit-scrollbar {
-    width: 10px;
-    height: 10px;
-}
-
-::-webkit-scrollbar-track {
-    background: #fff8f0;
-}
-
-::-webkit-scrollbar-thumb {
-    background: #92140c;
-    border-radius: 5px;
-    border: 2px solid #fff8f0;
-}
-
-::-webkit-scrollbar-thumb:hover {
-    background: #1e1e24;
-}
-
-/* Selection color */
-::selection {
-    background: #92140c;
-    color: #fff8f0;
-}
-
 /* Focus styles */
 :focus-visible {
     outline: 2px solid #92140c;

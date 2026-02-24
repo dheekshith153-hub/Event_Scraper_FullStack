@@ -39,9 +39,6 @@ func (s *TownscriptScraper) Scrape(ctx context.Context) ([]models.Event, error) 
 	seen := map[string]bool{}
 	emptyStreak := 0
 
-	// ── Launch ONE Chrome instance for all pages ──────────────────────────────
-	// Launching/killing Chrome per page wasted ~8s per page and caused timeouts.
-	// One persistent instance cuts total Chrome overhead from ~56s to ~5s.
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
 		chromedp.Flag("disable-gpu", true),
@@ -58,7 +55,6 @@ func (s *TownscriptScraper) Scrape(ctx context.Context) ([]models.Event, error) 
 	chromeCtx, cancelChrome := chromedp.NewContext(allocCtx)
 	defer cancelChrome()
 
-	// Warm up Chrome with first navigation (avoids cold-start penalty on page 1)
 	_ = chromedp.Run(chromeCtx, chromedp.Navigate("about:blank"))
 
 	for page := 1; page <= townscriptMaxPages; page++ {
@@ -113,7 +109,6 @@ func (s *TownscriptScraper) scrapePage(ctx context.Context, chromeCtx context.Co
 }
 
 func (s *TownscriptScraper) fetchHTMLWithChrome(ctx context.Context, chromeCtx context.Context, url string) (string, error) {
-	// Use a per-page timeout so one slow page doesn't kill everything
 	pageCtx, cancel := context.WithTimeout(chromeCtx, 35*time.Second)
 	defer cancel()
 
@@ -121,12 +116,7 @@ func (s *TownscriptScraper) fetchHTMLWithChrome(ctx context.Context, chromeCtx c
 
 	err := chromedp.Run(pageCtx,
 		chromedp.Navigate(url),
-
-		// Wait for Angular to render event cards.
-		// We wait for an anchor with /e/ in href — the actual event link pattern.
-		// Fallback: if no /e/ links appear in 15s, just grab whatever is there.
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			// Poll up to 15 seconds for event links to appear
 			deadline := time.Now().Add(15 * time.Second)
 			for time.Now().Before(deadline) {
 				var count int
@@ -136,16 +126,12 @@ func (s *TownscriptScraper) fetchHTMLWithChrome(ctx context.Context, chromeCtx c
 				}
 				time.Sleep(500 * time.Millisecond)
 			}
-			// Didn't find event links — continue anyway (page may be empty/last)
 			return nil
 		}),
-
-		// Scroll to trigger any lazy-loaded cards
 		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight / 2)`, nil),
 		chromedp.Sleep(500*time.Millisecond),
 		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight)`, nil),
 		chromedp.Sleep(500*time.Millisecond),
-
 		chromedp.OuterHTML("html", &htmlContent),
 	)
 	if err != nil {
@@ -166,14 +152,12 @@ func (s *TownscriptScraper) parseHTML(html string, seen map[string]bool) ([]mode
 	eAnchors := doc.Find("a[href*='/e/']").Length()
 	fmt.Printf("Townscript: DEBUG total anchors=%d, /e/ anchors=%d\n", totalAnchors, eAnchors)
 
-	// Strategy 1: primary confirmed structure
 	doc.Find("div.ls-card a[href^='/e/']").Each(func(_ int, a *goquery.Selection) {
 		if ev := s.extractEvent(a, seen); ev != nil {
 			events = append(events, *ev)
 		}
 	})
 
-	// Strategy 2: broader — absolute URLs or any /e/ anchor
 	if len(events) == 0 {
 		doc.Find("a[href*='townscript.com/e/'], a[href^='/e/']").Each(func(_ int, a *goquery.Selection) {
 			if ev := s.extractEvent(a, seen); ev != nil {
@@ -182,7 +166,6 @@ func (s *TownscriptScraper) parseHTML(html string, seen map[string]bool) ([]mode
 		})
 	}
 
-	// Strategy 3: Angular component wrapper
 	if len(events) == 0 {
 		doc.Find("ts-listings-event-card").Each(func(_ int, card *goquery.Selection) {
 			a := card.ParentsFiltered("a[href]").First()
@@ -195,7 +178,6 @@ func (s *TownscriptScraper) parseHTML(html string, seen map[string]bool) ([]mode
 		})
 	}
 
-	// Strategy 4: any anchor with /e/ in href
 	if len(events) == 0 {
 		doc.Find("a[href*='/e/']").Each(func(_ int, a *goquery.Selection) {
 			if ev := s.extractEvent(a, seen); ev != nil {
@@ -236,9 +218,15 @@ func (s *TownscriptScraper) extractEvent(a *goquery.Selection, seen map[string]b
 		return nil
 	}
 
-	// ── Debug: log what's being filtered and why ──────────────────────────────
-	if isTownscriptTraining(title) {
-		fmt.Printf("Townscript: [FILTER-TRAINING] %q\n", title)
+	// ── Non-event filter (training, real estate, etc.) ────────────────────────
+	if isTownscriptNonEvent(title) {
+		fmt.Printf("Townscript: [FILTER-NONEVENT] %q\n", title)
+		return nil
+	}
+
+	// ── Tech relevance check — must have at least one tech/community signal ───
+	if !hasTechSignal(title) {
+		fmt.Printf("Townscript: [FILTER-NOTECH] %q\n", title)
 		return nil
 	}
 
@@ -260,7 +248,6 @@ func (s *TownscriptScraper) extractEvent(a *goquery.Selection, seen map[string]b
 	// ── Date filter ───────────────────────────────────────────────────────────
 	dateLower := strings.ToLower(strings.TrimSpace(date))
 	if dateLower != "daily" && dateLower != "" {
-		// Import utils inline to avoid circular deps — replicate simple logic
 		if !isUpcomingTownscript(date) {
 			fmt.Printf("Townscript: [FILTER-DATE] %q date=%q\n", title, date)
 			return nil
@@ -268,7 +255,6 @@ func (s *TownscriptScraper) extractEvent(a *goquery.Selection, seen map[string]b
 	}
 
 	// ── Offline filter ────────────────────────────────────────────────────────
-	// Be more lenient: only skip if explicitly "Online"
 	locationLower := strings.ToLower(location)
 	titleLower := strings.ToLower(title)
 	if strings.Contains(locationLower, "online") ||
@@ -292,15 +278,105 @@ func (s *TownscriptScraper) extractEvent(a *goquery.Selection, seen map[string]b
 	}
 }
 
+// isTownscriptNonEvent blocks titles that are clearly not tech community events.
+// Covers: training/courses, real estate/property, machinery, medical, finance spam.
+func isTownscriptNonEvent(title string) bool {
+	t := strings.ToLower(tsCleaned(title))
+
+	blocklist := []string{
+		// ── Training / education ──────────────────────────────────────────────
+		"training", "course", "classes", "coaching",
+		"academy", "institute", "institution",
+		"certification", "certificate",
+		"bootcamp", "internship", "admission",
+		"tuition", "placement", "job guarantee",
+		"ielts", "toefl", "spoken english",
+
+		// ── Real estate / property ────────────────────────────────────────────
+		"apartment", "apartments", "flat", "flats", "villa", "villas",
+		"plot", "plots", "property", "properties",
+		"real estate", "realty", "housing", "residence", "residences",
+		"residential", "township", "township",
+		"bhk", "floor plan", "floor plans",
+		"sqft", "sq ft", "square feet",
+		"possession", "pre-launch", "prelaunch",
+		"rera", "ready to move",
+		"premium living", "luxury living", "luxury homes", "dream home",
+		"modern living", "modern homes",
+		"godrej", "brigade", "sobha", "prestige", "puravankara",
+		"lodha", "mahindra lifespace", "assetz", "embassy",
+		"kolte patil", "rustomjee", "shapoorji",
+		"sarjapur road", "whitefield", "hebbal", "yelahanka",
+		"chandapura", "kaikondrahalli", "jakkur", "devanahalli",
+		"unveiling", "launch price", "site visit",
+
+		// ── Industrial / machinery ────────────────────────────────────────────
+		"machine", "machinery", "equipment", "blasting",
+		"manufacturing", "industrial",
+
+		// ── Medical / health sales ────────────────────────────────────────────
+		"hospital", "clinic", "pharma", "medicine", "wellness spa",
+
+		// ── Financial products ────────────────────────────────────────────────
+		"insurance", "mutual fund", "loan",
+	}
+
+	for _, kw := range blocklist {
+		if strings.Contains(t, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasTechSignal returns true only if the title contains at least one keyword
+// associated with genuine tech/startup/community events.
+// This is the second gate — even if a title passes the blocklist, it must
+// show a positive tech signal to be included.
+func hasTechSignal(title string) bool {
+	t := strings.ToLower(tsCleaned(title))
+
+	techSignals := []string{
+		// ── Event formats ─────────────────────────────────────────────────────
+		"meetup", "meet-up", "conference", "summit", "hackathon",
+		"workshop", "webinar", "seminar", "expo", "conclave",
+		"fest", "festival", "fair", "demo day", "demo", "pitch",
+		"bootcamp", "sprint", "unconference", "barcamp",
+		"networking", "mixer", "connect", "community",
+
+		// ── Tech domains ──────────────────────────────────────────────────────
+		"tech", "technology", "software", "hardware", "developer",
+		"startup", "entrepreneur", "innovation", "digital",
+		"ai", "artificial intelligence", "machine learning", "ml",
+		"data", "cloud", "devops", "blockchain", "web3",
+		"cybersecurity", "security", "iot", "internet of things",
+		"product", "design", "ux", "ui", "agile", "scrum",
+		"open source", "github", "api", "saas", "fintech",
+		"edtech", "healthtech", "hrtech", "legaltech",
+		"robotics", "automation", "ar", "vr", "metaverse",
+		"mobile", "android", "ios", "flutter", "react",
+		"python", "javascript", "golang", "java", "devrel",
+
+		// ── Investor / business ───────────────────────────────────────────────
+		"investor", "investment", "venture", "vc", "angel",
+		"founders", "cto", "ceo", "leadership",
+	}
+
+	for _, signal := range techSignals {
+		if strings.Contains(t, signal) {
+			return true
+		}
+	}
+	return false
+}
+
 // isUpcomingTownscript checks if a Townscript date string is in the future.
-// Townscript formats: "Apr 21", "Apr 21 - 24", "Nov 29'24 - Jul 30'26"
 func isUpcomingTownscript(date string) bool {
 	if date == "" {
 		return true
 	}
 	now := time.Now()
 
-	// Try parsing "Mon DD" or "Mon DD - DD" (current year assumed)
 	months := map[string]time.Month{
 		"jan": time.January, "feb": time.February, "mar": time.March,
 		"apr": time.April, "may": time.May, "jun": time.June,
@@ -308,7 +384,6 @@ func isUpcomingTownscript(date string) bool {
 		"oct": time.October, "nov": time.November, "dec": time.December,
 	}
 
-	// Grab first 3-letter month + day
 	parts := strings.Fields(date)
 	if len(parts) >= 2 {
 		mon, ok := months[strings.ToLower(parts[0])[:3]]
@@ -317,7 +392,6 @@ func isUpcomingTownscript(date string) bool {
 			fmt.Sscanf(parts[1], "%d", &day)
 			if day > 0 {
 				t := time.Date(now.Year(), mon, day, 0, 0, 0, 0, now.Location())
-				// If date appears to be in the past, try next year
 				if t.Before(now.AddDate(0, -1, 0)) {
 					t = t.AddDate(1, 0, 0)
 				}
@@ -326,27 +400,7 @@ func isUpcomingTownscript(date string) bool {
 		}
 	}
 
-	return true // Unknown format — include it
-}
-
-// isTownscriptTraining returns true for training/course listings (not real events)
-func isTownscriptTraining(title string) bool {
-	t := strings.ToLower(tsCleaned(title))
-	trainingKeywords := []string{
-		"training", "course", "classes", "coaching",
-		"academy", "institute", "institution",
-		"certification", "certificate",
-		"bootcamp", "internship", "admission",
-		"tuition", "placement", "job guarantee",
-		"ielts", "toefl", "spoken english",
-		"floor plans", "godrej", "apartment",
-	}
-	for _, kw := range trainingKeywords {
-		if strings.Contains(t, kw) {
-			return true
-		}
-	}
-	return false
+	return true
 }
 
 func normalizeTownscriptURL(href string) string {

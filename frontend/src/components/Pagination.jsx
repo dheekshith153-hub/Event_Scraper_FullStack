@@ -1,5 +1,5 @@
 export default function Pagination({ page, totalPages, onPage }) {
-    if (totalPages <= 1) return null;
+    if (!totalPages || totalPages <= 1) return null;
 
     const windowSize = 7;
     let start = Math.max(1, page - Math.floor(windowSize / 2));
@@ -11,65 +11,102 @@ export default function Pagination({ page, totalPages, onPage }) {
     }
 
     const pages = [];
-    for (let i = start; i <= end; i++) {
-        pages.push(i);
-    }
+    for (let i = start; i <= end; i++) pages.push(i);
 
-    const navBtn = (onClick, disabled, label) => (
+    const NavBtn = ({ onClick, disabled, children }) => (
         <button
             onClick={onClick}
             disabled={disabled}
-            className="w-9 h-9 flex items-center justify-center rounded-full text-sm font-medium transition-all duration-200 border"
             style={{
-                background: "#fff",
-                color: disabled ? "#ccc" : "#555",
-                borderColor: "#e0e0e0",
+                width: 36, height: 36,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                borderRadius: "50%",
+                border: "1px solid",
+                borderColor: disabled ? "rgba(146,20,12,0.1)" : "rgba(146,20,12,0.2)",
+                background: "transparent",
+                color: disabled ? "rgba(30,30,36,0.25)" : "#1e1e24",
+                fontSize: 14,
+                fontWeight: 500,
                 cursor: disabled ? "not-allowed" : "pointer",
+                transition: "all 0.2s",
+                fontFamily: "'Inter', sans-serif",
             }}
-            onMouseEnter={(e) => {
+            onMouseEnter={e => {
                 if (!disabled) {
-                    e.currentTarget.style.borderColor = "#4a1942";
-                    e.currentTarget.style.color = "#4a1942";
+                    e.currentTarget.style.borderColor = "#92140c";
+                    e.currentTarget.style.color = "#92140c";
+                    e.currentTarget.style.background = "rgba(146,20,12,0.05)";
                 }
             }}
-            onMouseLeave={(e) => {
+            onMouseLeave={e => {
                 if (!disabled) {
-                    e.currentTarget.style.borderColor = "#e0e0e0";
-                    e.currentTarget.style.color = "#555";
+                    e.currentTarget.style.borderColor = "rgba(146,20,12,0.2)";
+                    e.currentTarget.style.color = "#1e1e24";
+                    e.currentTarget.style.background = "transparent";
                 }
             }}
         >
-            {label}
+            {children}
         </button>
     );
 
     return (
-        <div className="flex items-center justify-center gap-1.5 mt-10">
-            {navBtn(() => onPage(1), page === 1, "«")}
-            {navBtn(() => onPage(page - 1), page === 1, "‹")}
+        <div style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            marginTop: 48,
+            marginBottom: 24,
+            fontFamily: "'Inter', sans-serif",
+        }}>
+            {/* First page */}
+            <NavBtn onClick={() => onPage(1)} disabled={page === 1}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7M18 19l-7-7 7-7" />
+                </svg>
+            </NavBtn>
 
-            {pages.map((p) => (
+            {/* Prev page */}
+            <NavBtn onClick={() => onPage(page - 1)} disabled={page === 1}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+                </svg>
+            </NavBtn>
+
+            {/* Page numbers */}
+            {pages.map(p => (
                 <button
                     key={p}
                     onClick={() => onPage(p)}
-                    className="w-9 h-9 flex items-center justify-center rounded-full text-sm transition-all duration-200 border"
                     style={{
-                        background: p === page ? "#4a1942" : "#fff",
-                        color: p === page ? "#fff" : "#555",
-                        borderColor: p === page ? "#4a1942" : "#e0e0e0",
-                        boxShadow: p === page ? "0 2px 8px rgba(74,25,66,0.25)" : "none",
-                        fontWeight: p === page ? "600" : "400",
+                        width: 36, height: 36,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        borderRadius: "50%",
+                        border: "1px solid",
+                        borderColor: p === page ? "#92140c" : "rgba(146,20,12,0.2)",
+                        background: p === page ? "#92140c" : "transparent",
+                        color: p === page ? "#fff8f0" : "#1e1e24",
+                        fontSize: 13,
+                        fontWeight: p === page ? 600 : 400,
+                        cursor: "pointer",
+                        transition: "all 0.2s",
+                        fontFamily: "'Inter', sans-serif",
+                        boxShadow: p === page ? "0 4px 12px rgba(146,20,12,0.3)" : "none",
+                        letterSpacing: "0.01em",
                     }}
-                    onMouseEnter={(e) => {
+                    onMouseEnter={e => {
                         if (p !== page) {
-                            e.currentTarget.style.borderColor = "#4a1942";
-                            e.currentTarget.style.color = "#4a1942";
+                            e.currentTarget.style.borderColor = "#92140c";
+                            e.currentTarget.style.color = "#92140c";
+                            e.currentTarget.style.background = "rgba(146,20,12,0.05)";
                         }
                     }}
-                    onMouseLeave={(e) => {
+                    onMouseLeave={e => {
                         if (p !== page) {
-                            e.currentTarget.style.borderColor = "#e0e0e0";
-                            e.currentTarget.style.color = "#555";
+                            e.currentTarget.style.borderColor = "rgba(146,20,12,0.2)";
+                            e.currentTarget.style.color = "#1e1e24";
+                            e.currentTarget.style.background = "transparent";
                         }
                     }}
                 >
@@ -77,7 +114,19 @@ export default function Pagination({ page, totalPages, onPage }) {
                 </button>
             ))}
 
-            {navBtn(() => onPage(page + 1), page === totalPages, "›")}
+            {/* Next page */}
+            <NavBtn onClick={() => onPage(page + 1)} disabled={page === totalPages}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+            </NavBtn>
+
+            {/* Last page */}
+            <NavBtn onClick={() => onPage(totalPages)} disabled={page === totalPages}>
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M6 5l7 7-7 7" />
+                </svg>
+            </NavBtn>
         </div>
     );
 }

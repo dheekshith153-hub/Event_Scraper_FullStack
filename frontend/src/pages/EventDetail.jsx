@@ -26,6 +26,69 @@ const SOURCE_URLS = {
     hitex: "https://hitex.co.in",
 };
 
+// ── Same curated Unsplash pools as EventCard ──────────────────────────────
+const POOL_NETWORKING = [
+    "https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1528605248644-14dd04022da1?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1475721027785-f74eccf877e2?w=900&h=420&fit=crop&auto=format",
+];
+
+const POOL_CONFERENCE = [
+    "https://images.unsplash.com/photo-1587825140708-dfaf72ae4b04?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1559223607-b4d0555ae227?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1517048676732-d65bc937f952?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1582192730841-2a682d7375f9?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1573164713714-d95e436ab8d6?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1561489413-985b06da5bee?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1511578314322-379afb476865?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1464207687429-7505649dae38?w=900&h=420&fit=crop&auto=format",
+];
+
+const POOL_TECH = [
+    "https://images.unsplash.com/photo-1531297484001-80022131f5a1?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1518770660439-4636190af475?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1563770660941-20978e870e26?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=900&h=420&fit=crop&auto=format",
+];
+
+const POOL_EXPO = [
+    "https://images.unsplash.com/photo-1587168501724-e9354f88e7cb?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1544531585-9847b68c8c86?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1497366216548-37526070297c?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1542744094-3a31f272c490?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1526566661780-1a67ea3c863e?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1560439513-74b037a25d84?w=900&h=420&fit=crop&auto=format",
+];
+
+const PLATFORM_POOL = {
+    echai: POOL_NETWORKING,
+    meetup: POOL_NETWORKING,
+    hasgeek: POOL_TECH,
+    allevents: POOL_CONFERENCE,
+    townscript: POOL_CONFERENCE,
+    biec: POOL_EXPO,
+    hitex: POOL_EXPO,
+};
+
+// Returns the same deterministic image as the EventCard for this event
+function getEventImage(event) {
+    const pool = PLATFORM_POOL[event.platform] || POOL_CONFERENCE;
+    const idx = Math.abs(event.id || 0) % pool.length;
+    return pool[idx];
+}
+
+// ── Date formatter ────────────────────────────────────────────────────────
 function formatDateCard(dateStr) {
     if (!dateStr) return "Date TBA";
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
@@ -85,97 +148,44 @@ function htmlToPlainText(html) {
 
 function isHTML(str) { return /<[a-z][\s\S]*>/i.test(str || ""); }
 
-// ── Aggressive description cleaner ───────────────────────────────
-// Handles AllEvents, Meetup, HasGeek, Townscript and others.
-// Strips: URLs, social invite links, bullet symbols, pricing/fee lines,
-// agenda labels, CTAs, sponsor lines, name/location duplicates.
-// Hard caps output at 7 lines → grouped into 2 clean paragraphs.
 function cleanDescription(text, eventName = "", location = "") {
     if (!text) return "";
-
-    // Step 1: Strip leading bullet/diamond symbols, keep the text after them
-    // Handles ◆ ❖ • ➤ → ▸ ✦ ★ ✓ ✔ ✗ - – — *
     text = text.split("\n").map(line =>
         line.replace(/^[\s◆❖•➤→▸✦★✓✔✗✘►▶\-–—*]+/, "").trim()
     ).join("\n");
 
-    // Step 2: Patterns that cause an entire line to be dropped
     const dropLine = [
-        // Bare URLs
         /^https?:\/\/\S+$/i,
-        // Any line containing a social/community invite link
         /slack\.com\/|whatsapp\.com\/|t\.me\/|discord\.gg\//i,
-        // Lines with long embedded URLs
         /https?:\/\/\S{20,}/i,
-
-        // Filler CTAs / noise phrases
-        /^also check out/i,
-        /^stay in the loop/i,
-        /^are you interested/i,
-        /^join the community/i,
-        /^join us (on|at|for)/i,
-        /^follow us/i,
-        /^subscribe/i,
-        /^sign up/i,
-        /^register (now|here|today)/i,
-        /^get (your )?(tickets?|passes?)/i,
-        /^buy tickets?/i,
-        /^book (now|here|your)/i,
-        /^click here/i,
-        /^read more/i,
-        /^learn more/i,
-        /^find out more/i,
-        /^view (all|more)/i,
-        /^load more/i,
-        /^share (this|event)/i,
-        /^newsletter/i,
-        /^copyright/i,
-        /^all rights reserved/i,
-        /^powered by/i,
-        /^in association with/i,
-        /^more coming soon/i,
-
-        // CFP / conference submission noise
+        /^also check out/i, /^stay in the loop/i, /^are you interested/i,
+        /^join the community/i, /^join us (on|at|for)/i, /^follow us/i,
+        /^subscribe/i, /^sign up/i, /^register (now|here|today)/i,
+        /^get (your )?(tickets?|passes?)/i, /^buy tickets?/i,
+        /^book (now|here|your)/i, /^click here/i, /^read more/i,
+        /^learn more/i, /^find out more/i, /^view (all|more)/i,
+        /^load more/i, /^share (this|event)/i, /^newsletter/i,
+        /^copyright/i, /^all rights reserved/i, /^powered by/i,
+        /^in association with/i, /^more coming soon/i,
         /^call for (proposals?|speakers?|submissions?)/i,
-        /^submit your/i,
-        /^cfp/i,
-        /^we('re| are) opening/i,
+        /^submit your/i, /^cfp/i, /^we('re| are) opening/i,
         /^suggested themes?:/i,
-
-        // Agenda structural labels (the label itself, not the content)
-        /^agenda:?\s*$/i,
-        /^schedule:?\s*$/i,
-        /^(welcome \+|q&a|networking)\s*$/i,
-
-        // Nav / UI chrome
+        /^agenda:?\s*$/i, /^schedule:?\s*$/i, /^(welcome \+|q&a|networking)\s*$/i,
         /^(home|about|contact|terms|privacy|cookie|×|close|menu|search|login|sign ?in|sign ?up|back|next|previous)$/i,
-
-        // Date-only lines
         /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday),?\s+/i,
         /^\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}/i,
         /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2},?\s+\d{4}/i,
         /^\d{4}-\d{2}-\d{2}(T.*)?$/,
-
-        // Address / city-only lines
         /^[^.]{20,},.*\d{6}/,
         /^[^.]{20,},.*india$/i,
         /^(bengaluru|bangalore|hyderabad|mumbai|delhi|chennai|kolkata|pune|online|virtual)$/i,
-
-        // Fee / pricing lines (often outdated promotional noise)
-        /^₹[\d,]+/,
-        /^(registration fees?|early bird|fees? will)/i,
+        /^₹[\d,]+/, /^(registration fees?|early bird|fees? will)/i,
         /^from \d+(st|nd|rd|th)? (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i,
-        /^(till|until) \d+(st|nd|rd|th)?/i,
-        /^and all this in /i,
-
-        // Numbered sponsor/partner lines
+        /^(till|until) \d+(st|nd|rd|th)?/i, /^and all this in /i,
         /^\d+\.\s*(https?:\/\/|guard|more coming)/i,
-
-        // Very short lines (under 20 chars) — almost always noise fragments
         /^.{1,19}$/,
     ];
 
-    // Step 3: Name + location duplicate detection
     const nameWords = new Set(
         eventName.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 3)
     );
@@ -193,7 +203,6 @@ function cleanDescription(text, eventName = "", location = "") {
         return lw.filter(w => locWords.includes(w)).length >= 2 && line.length < 130;
     };
 
-    // Step 4: Filter lines
     const filtered = text.split("\n").filter(line => {
         const t = line.trim();
         if (!t) return false;
@@ -203,8 +212,6 @@ function cleanDescription(text, eventName = "", location = "") {
         return true;
     });
 
-    // Step 5: Stop at structural section breaks that signal non-description content
-    // (agenda items, community links, CFP, sponsor blocks)
     const sectionBreaks = [
         /^(agenda|schedule|you'?ll learn|what you'?ll learn|join the community|call for proposals?|in association with|speakers?:|organis(er|ers?):)\b/i,
         /^(slack|whatsapp|telegram|discord)\b.*:/i,
@@ -215,19 +222,17 @@ function cleanDescription(text, eventName = "", location = "") {
     for (const line of filtered) {
         if (capped.length > 0 && sectionBreaks.some(p => p.test(line.trim()))) break;
         capped.push(line.trim());
-        if (capped.length >= 7) break; // hard cap: max 7 lines
+        if (capped.length >= 7) break;
     }
 
     if (!capped.length) return "";
-
-    // Step 6: Group into 2 clean paragraphs
     const splitAt = Math.ceil(capped.length / 2);
     const para1 = capped.slice(0, splitAt).join(" ").trim();
     const para2 = capped.slice(splitAt).join(" ").trim();
-
     return [para1, para2].filter(Boolean).join("\n");
 }
 
+// ── Fallback SVG (only used if Unsplash also fails) ───────────────────────
 function buildHeroSVG(eventName = "", eventId = 0) {
     let hash = (eventId * 2654435761) >>> 0;
     for (let i = 0; i < eventName.length; i++)
@@ -266,6 +271,59 @@ function extractVenue(location) {
     return location.split(",")[0].trim();
 }
 
+// ── Event name formatter (same logic as EventCard) ────────────────────────
+const ALWAYS_UPPER = new Set([
+    "AWS", "AI", "ML", "API", "UI", "UX", "SQL", "NoSQL", "REST", "SDK",
+    "MVP", "SaaS", "PaaS", "IaaS", "IoT", "AR", "VR", "XR", "NFT",
+    "Web3", "HTML", "CSS", "JS", "TS", "PHP", "JVM", "GCP", "GIS",
+    "CI", "CD", "DevOps", "DevSecOps", "SEO", "CRM", "ERP", "HR",
+    "B2B", "B2C", "D2C", "BIEC", "HITEX", "TBA",
+]);
+
+const ALWAYS_LOWER = new Set([
+    "a", "an", "the", "and", "but", "or", "for", "nor", "on", "at",
+    "to", "by", "in", "of", "up", "as", "vs", "via",
+]);
+
+const STRIP_PREFIXES = [
+    /^in\s+person\s*[:\-–]?\s*/i,
+    /^event\s+announcement\s*[:\-–]?\s*/i,
+    /^free\s+event\s*[:\-–]?\s*/i,
+    /^announcement\s*[:\-–]?\s*/i,
+    /^upcoming\s*[:\-–]?\s*/i,
+    /^online\s+event\s*[:\-–]?\s*/i,
+];
+
+function stripEmojis(str) {
+    return str
+        .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+}
+
+function toTitleCase(str) {
+    const words = str.split(/(\s+|-)/);
+    return words.map((token, i) => {
+        if (/^[\s-]+$/.test(token)) return token;
+        const upper = token.toUpperCase();
+        const lower = token.toLowerCase();
+        if (ALWAYS_UPPER.has(upper)) return upper;
+        if (/[®™©]/.test(token) && token !== token.toUpperCase()) return token;
+        if (i > 0 && ALWAYS_LOWER.has(lower)) return lower;
+        return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+    }).join("");
+}
+
+function formatEventName(raw) {
+    if (!raw) return "";
+    let name = stripEmojis(raw);
+    for (const pattern of STRIP_PREFIXES) {
+        name = name.replace(pattern, "");
+    }
+    name = name.replace(/\s{2,}/g, " ").trim();
+    return toTitleCase(name);
+}
+
 export default function EventDetail() {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -275,6 +333,7 @@ export default function EventDetail() {
     const [isSaved, setIsSaved] = useState(false);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    // Two-stage fallback: curated → SVG
     const [heroImgErr, setHeroImgErr] = useState(false);
 
     useEffect(() => {
@@ -326,8 +385,12 @@ export default function EventDetail() {
     const officialWebsite = eventDetail?.external_url || eventDetail?.registration_url || event.website;
     const parentSiteURL = SOURCE_URLS[event.platform] || officialWebsite;
     const parentSiteLabel = SOURCE_LABELS[event.platform] || event.platform;
-    const realHeroImg = eventDetail?.image_url || null;
-    const heroSrc = (realHeroImg && !heroImgErr) ? realHeroImg : buildHeroSVG(event.event_name, event.id);
+
+    // ── Hero image priority: curated Unsplash (same as card) → SVG fallback ──
+    const curatedHeroImg = getEventImage(event);
+    const heroSrc = heroImgErr ? buildHeroSVG(event.event_name, event.id) : curatedHeroImg;
+    const displayName = formatEventName(event.event_name);
+
     const rawDesc = eventDetail?.full_description || event.description || "";
     const stripped = isHTML(rawDesc) ? htmlToPlainText(rawDesc) : rawDesc.trim();
     const plainDesc = cleanDescription(stripped, event.event_name, event.location);
@@ -345,7 +408,7 @@ export default function EventDetail() {
             <div style={{ position: "relative", height: 420, overflow: "hidden" }}>
                 <img
                     src={heroSrc}
-                    alt={event.event_name}
+                    alt={displayName}
                     style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                     onError={() => setHeroImgErr(true)}
                 />
@@ -387,7 +450,7 @@ export default function EventDetail() {
                         lineHeight: 1.2, letterSpacing: "-0.02em",
                         marginBottom: 14, textShadow: "0 2px 16px rgba(0,0,0,0.5)",
                     }}>
-                        {event.event_name}
+                        {displayName}
                     </h1>
 
                     <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>

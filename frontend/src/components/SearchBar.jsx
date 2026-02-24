@@ -22,8 +22,8 @@ export default function SearchBar({ value, onChange, count }) {
                     onChange={e => onChange(e.target.value)}
                     onFocus={() => setFocused(true)}
                     onBlur={() => setFocused(false)}
-                    placeholder={`Search ${count}+ events by name, topic, or city...`}
-                    className="flex-1 outline-none bg-transparent text-sm"
+                    placeholder={`Explore what’s next in tech…`}
+                    className="flex-1 bg-transparent text-sm focus:outline-none focus:ring-0 focus:border-0"
                     style={{ color: "#1e1e24", fontFamily: "'Inter', sans-serif", letterSpacing: "0.02em" }}
                 />
                 {value && (
