@@ -3,47 +3,47 @@ import { useNavigate } from "react-router-dom";
 
 // ── Curated Unsplash photo pools by platform/category ──────────────────────
 const POOL_NETWORKING = [
-    "https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1528605248644-14dd04022da1?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1475721027785-f74eccf877e2?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1528605248644-14dd04022da1?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1475721027785-f74eccf877e2?w=900&h=420&fit=crop&auto=format",
 ];
 
 const POOL_CONFERENCE = [
-    "https://images.unsplash.com/photo-1587825140708-dfaf72ae4b04?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1559223607-b4d0555ae227?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1517048676732-d65bc937f952?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1582192730841-2a682d7375f9?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1573164713714-d95e436ab8d6?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1561489413-985b06da5bee?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1511578314322-379afb476865?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1464207687429-7505649dae38?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1587825140708-dfaf72ae4b04?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1559223607-b4d0555ae227?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1517048676732-d65bc937f952?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1582192730841-2a682d7375f9?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1573164713714-d95e436ab8d6?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1561489413-985b06da5bee?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1511578314322-379afb476865?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1464207687429-7505649dae38?w=900&h=420&fit=crop&auto=format",
 ];
 
 const POOL_TECH = [
-    "https://images.unsplash.com/photo-1531297484001-80022131f5a1?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1518770660439-4636190af475?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1563770660941-20978e870e26?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1531297484001-80022131f5a1?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1518770660439-4636190af475?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1563770660941-20978e870e26?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=900&h=420&fit=crop&auto=format",
 ];
 
 const POOL_EXPO = [
-    "https://images.unsplash.com/photo-1587168501724-e9354f88e7cb?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1544531585-9847b68c8c86?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1497366216548-37526070297c?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1542744094-3a31f272c490?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1526566661780-1a67ea3c863e?w=400&h=220&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1560439513-74b037a25d84?w=400&h=220&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1587168501724-e9354f88e7cb?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1544531585-9847b68c8c86?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1497366216548-37526070297c?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1542744094-3a31f272c490?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1526566661780-1a67ea3c863e?w=900&h=420&fit=crop&auto=format",
+    "https://images.unsplash.com/photo-1560439513-74b037a25d84?w=900&h=420&fit=crop&auto=format",
 ];
 
 const PLATFORM_POOL = {
@@ -56,13 +56,102 @@ const PLATFORM_POOL = {
     hitex: POOL_EXPO,
 };
 
+// Deterministic: same event always gets the same image on card AND detail page
 function getEventImage(event) {
     const pool = PLATFORM_POOL[event.platform] || POOL_CONFERENCE;
     const idx = Math.abs(event.id || 0) % pool.length;
     return pool[idx];
 }
 
-// ── Month abbreviations ───────────────────────────────────────────────────
+// ── Name formatter ────────────────────────────────────────────────────────
+const ALWAYS_UPPER = new Set([
+    "AWS", "AI", "ML", "API", "UI", "UX", "SQL", "NoSQL", "REST", "SDK",
+    "MVP", "SaaS", "PaaS", "IaaS", "IoT", "AR", "VR", "XR", "NFT",
+    "Web3", "HTML", "CSS", "JS", "TS", "PHP", "JVM", "GCP", "GIS",
+    "CI", "CD", "DevOps", "DevSecOps", "SEO", "CRM", "ERP", "HR",
+    "B2B", "B2C", "D2C", "BIEC", "HITEX", "TBA", "EC2", "S3", "RDS",
+    "VPC", "IAM", "EKS", "ECS", "LLM", "NLP", "CV", "RL", "DL",
+    "GPU", "CPU", "RAM", "SSD", "HDD", "USB", "TCP", "IP", "DNS",
+    "HTTP", "HTTPS", "SSH", "SSL", "TLS", "JWT", "OAuth", "ICTL",
+    "SLM", "LORA", "RAG",
+]);
+
+const ALWAYS_LOWER = new Set([
+    "a", "an", "the", "and", "but", "or", "for", "nor", "on", "at",
+    "to", "by", "in", "of", "up", "as", "vs", "via", "with",
+]);
+
+const STRIP_PREFIXES = [
+    /^in\s+person\s*[:\-–]?\s*/i,
+    /^event\s+announcement\s*[:\-–]?\s*/i,
+    /^free\s+event\s*[:\-–]?\s*/i,
+    /^announcement\s*[:\-–]?\s*/i,
+    /^upcoming\s*[:\-–]?\s*/i,
+    /^online\s+event\s*[:\-–]?\s*/i,
+    /^register\s+now\s*[:\-–]?\s*/i,
+    /^new\s*[:\-–]\s*/i,
+];
+
+const CITY_NAMES = new Set([
+    "pune", "bengaluru", "bangalore", "mumbai", "hyderabad", "chennai",
+    "delhi", "new delhi", "kolkata", "ahmedabad", "gurugram", "gurgaon",
+    "noida", "jaipur", "kochi", "surat", "coimbatore", "salem", "online",
+    "virtual", "remote",
+]);
+
+function stripEmojis(str) {
+    return str
+        .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+}
+
+function stripNoisyBrackets(str) {
+    str = str.replace(/\(\s*([^)]{1,30})\s*\)/g, (match, inner) => {
+        const clean = inner.trim().toLowerCase();
+        if (CITY_NAMES.has(clean)) return "";
+        if (/^[A-Z]{2,8}$/.test(inner.trim())) return "";
+        if (/^\w{1,6}$/.test(inner.trim()) && !/^\d+$/.test(inner.trim())) return "";
+        return match;
+    });
+    str = str.replace(/\[\s*([^\]]{1,30})\s*\]/g, (match, inner) => {
+        const clean = inner.trim().toLowerCase();
+        if (CITY_NAMES.has(clean)) return "";
+        if (/^[A-Z]{2,8}$/.test(inner.trim())) return "";
+        return match;
+    });
+    return str;
+}
+
+function toTitleCase(str) {
+    const words = str.split(/(\s+|-)/);
+    return words
+        .map((token, i) => {
+            if (/^[\s-]+$/.test(token)) return token;
+            const upper = token.toUpperCase();
+            const lower = token.toLowerCase();
+            if (ALWAYS_UPPER.has(upper)) return upper;
+            if (/[®™©]/.test(token) && token !== token.toUpperCase()) return token;
+            if (i > 0 && ALWAYS_LOWER.has(lower)) return lower;
+            return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+        })
+        .join("");
+}
+
+function formatEventName(raw) {
+    if (!raw) return "";
+    let name = stripEmojis(raw);
+    for (const pattern of STRIP_PREFIXES) {
+        name = name.replace(pattern, "");
+    }
+    name = stripNoisyBrackets(name);
+    name = name.replace(/[|#$%^*~`]/g, "");
+    name = name.replace(/\s{2,}/g, " ").trim();
+    name = name.replace(/[\-–:,]+$/, "").trim();
+    return toTitleCase(name);
+}
+
+// ── Date parser ───────────────────────────────────────────────────────────
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -81,18 +170,20 @@ function toDisplay(date) {
 function parseDate(str) {
     if (!str) return null;
     str = str.trim();
-
     if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
         const [y, m, d] = str.split("-").map(Number);
         return new Date(Date.UTC(y, m - 1, d));
     }
-
     if (/^\d{4}-\d{2}-\d{2}T/.test(str)) {
         const p = new Date(str);
         if (!isNaN(p.getTime()))
             return new Date(Date.UTC(p.getUTCFullYear(), p.getUTCMonth(), p.getUTCDate()));
     }
-
+    const usDate = str.match(/^(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{4})$/i);
+    if (usDate) {
+        const mi = monthIndex(usDate[1]);
+        if (mi !== -1) return new Date(Date.UTC(+usDate[3], mi, +usDate[2]));
+    }
     const apoMatch = str.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})'(\d{2,4})$/i);
     if (apoMatch) {
         const mi = monthIndex(apoMatch[1]);
@@ -100,32 +191,22 @@ function parseDate(str) {
         if (yr < 100) yr += 2000;
         if (mi !== -1) return new Date(Date.UTC(yr, mi, +apoMatch[2]));
     }
-
-    const mdyMatch = str.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})[,\s]+(\d{4})$/i);
-    if (mdyMatch) {
-        const mi = monthIndex(mdyMatch[1]);
-        if (mi !== -1) return new Date(Date.UTC(+mdyMatch[3], mi, +mdyMatch[2]));
-    }
-
     const dmyMatch = str.match(/^(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})$/i);
     if (dmyMatch) {
         const mi = monthIndex(dmyMatch[2]);
         if (mi !== -1) return new Date(Date.UTC(+dmyMatch[3], mi, +dmyMatch[1]));
     }
-
-    const longMatch = str.match(/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})(?:[,\s]+(\d{4}))?$/i);
-    if (longMatch) {
-        const mi = monthIndex(longMatch[1]);
-        const yr = longMatch[3] ? +longMatch[3] : new Date().getUTCFullYear();
-        if (mi !== -1) return new Date(Date.UTC(yr, mi, +longMatch[2]));
+    const range1 = str.match(/^(\d{1,2})\s*[–-]\s*\d{1,2}\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})$/i);
+    if (range1) {
+        const mi = monthIndex(range1[2]);
+        if (mi !== -1) return new Date(Date.UTC(+range1[3], mi, +range1[1]));
     }
-
-    const bareMatch = str.match(/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})$/i);
-    if (bareMatch) {
-        const mi = monthIndex(bareMatch[1]);
-        if (mi !== -1) return new Date(Date.UTC(new Date().getUTCFullYear(), mi, +bareMatch[2]));
+    const cardish = str.match(/^(Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s*(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s+(\d{4}))?/i);
+    if (cardish) {
+        const mi = monthIndex(cardish[3]);
+        const yr = cardish[4] ? +cardish[4] : new Date().getUTCFullYear();
+        if (mi !== -1) return new Date(Date.UTC(yr, mi, +cardish[2]));
     }
-
     return null;
 }
 
@@ -137,171 +218,27 @@ function formatDateCard(raw) {
     return toDisplay(parseDate(startStr)) || "Date TBA";
 }
 
-// ── Event name formatter ──────────────────────────────────────────────────
-// Preserves known tech acronyms, strips emojis & noisy prefixes,
-// applies Title Case to everything else.
-
-// Words that should stay fully uppercase (tech acronyms & common abbreviations)
-const ALWAYS_UPPER = new Set([
-    "AWS", "AI", "ML", "API", "UI", "UX", "SQL", "NoSQL", "REST", "SDK",
-    "MVP", "SaaS", "PaaS", "IaaS", "IoT", "AR", "VR", "XR", "NFT",
-    "Web3", "HTML", "CSS", "JS", "TS", "PHP", "JVM", "GCP", "GIS",
-    "CI", "CD", "DevOps", "DevSecOps", "SEO", "CRM", "ERP", "HR",
-    "B2B", "B2C", "D2C", "BIEC", "HITEX", "TBA",
-]);
-
-// Words that should stay lowercase (conjunctions, prepositions, articles)
-const ALWAYS_LOWER = new Set([
-    "a", "an", "the", "and", "but", "or", "for", "nor", "on", "at",
-    "to", "by", "in", "of", "up", "as", "vs", "via",
-]);
-
-// Noisy prefixes to strip before formatting (case-insensitive)
-const STRIP_PREFIXES = [
-    /^in\s+person\s*[:\-–]?\s*/i,
-    /^event\s+announcement\s*[:\-–]?\s*/i,
-    /^free\s+event\s*[:\-–]?\s*/i,
-    /^announcement\s*[:\-–]?\s*/i,
-    /^upcoming\s*[:\-–]?\s*/i,
-    /^online\s+event\s*[:\-–]?\s*/i,
-];
-
-// Strip all emoji characters
-function stripEmojis(str) {
-    return str
-        .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-}
-
-function toTitleCase(str) {
-    // Split on spaces and hyphens, preserve hyphens in output
-    const words = str.split(/(\s+|-)/);
-    return words
-        .map((token, i) => {
-            // Preserve whitespace and hyphen tokens as-is
-            if (/^[\s-]+$/.test(token)) return token;
-
-            const upper = token.toUpperCase();
-            const lower = token.toLowerCase();
-
-            // Always-upper acronyms
-            if (ALWAYS_UPPER.has(upper)) return upper;
-
-            // Preserve mixed-case like "Kafka®" — if token has mixed case already and
-            // contains a special char (®, ™, ©), keep it as-is
-            if (/[®™©]/.test(token) && token !== token.toUpperCase()) return token;
-
-            // Always-lower words (except first word of name)
-            if (i > 0 && ALWAYS_LOWER.has(lower)) return lower;
-
-            // Default: capitalise first letter, lowercase rest
-            return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
-        })
-        .join("");
-}
-
-function formatEventName(raw) {
-    if (!raw) return "";
-
-    // 1. Strip emojis
-    let name = stripEmojis(raw);
-
-    // 2. Strip noisy prefixes
-    for (const pattern of STRIP_PREFIXES) {
-        name = name.replace(pattern, "");
-    }
-
-    // 3. Collapse extra whitespace
-    name = name.replace(/\s{2,}/g, " ").trim();
-
-    // 4. Apply Title Case
-    return toTitleCase(name);
-}
-
-// ── Location formatter ────────────────────────────────────────────────────
-// Extracts the most useful part: "Venue, Area, City" → "Area, City"
-// or just normalises casing for overly long venue strings.
-function formatLocation(raw) {
-    if (!raw) return "Location TBA";
-
-    // Split on comma
-    const parts = raw.split(",").map(p => p.trim()).filter(Boolean);
-
-    if (parts.length === 0) return "Location TBA";
-
-    // If only one part, return as-is with title case
-    if (parts.length === 1) return toTitleCase(parts[0]);
-
-    // If 2 parts: "Venue, City" → keep both
-    if (parts.length === 2) return parts.map(toTitleCase).join(", ");
-
-    // If 3+ parts: often "Full Venue Address, Area, City"
-    // → Show last 2 meaningful parts (skip long address strings)
-    const lastTwo = parts.slice(-2).map(toTitleCase);
-    return lastTwo.join(", ");
-}
-
-// ── Fallback SVG when Unsplash fails ──────────────────────────────────────
-function safeInitials(eventName = "") {
-    const safe = eventName.replace(/[^\x20-\x7E]/g, "").trim();
-    const words = safe.split(/\s+/).filter(Boolean);
-    if (words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
-    if (words.length === 1 && words[0].length >= 2) return words[0].slice(0, 2).toUpperCase();
-    return "EV";
-}
-
-function buildFallbackSVG(eventName = "", eventId = 0) {
-    let hash = (eventId * 2654435761) >>> 0;
-    const chars = [...(eventName || "")];
-    for (let i = 0; i < chars.length; i++) {
-        const code = chars[i].codePointAt(0) || 0;
-        hash = (((hash << 5) - hash + code) | 0) >>> 0;
-    }
-    const h = hash % 360;
-    const h2 = (h + 40) % 360;
-    const c1 = `hsl(${h},55%,28%)`;
-    const c2 = `hsl(${h2},60%,18%)`;
-    const ac = `hsl(${h},70%,75%)`;
-    const ab = safeInitials(eventName);
-
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="220" viewBox="0 0 400 220">
-  <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="${c1}"/>
-      <stop offset="100%" stop-color="${c2}"/>
-    </linearGradient>
-    <filter id="b"><feGaussianBlur stdDeviation="18"/></filter>
-  </defs>
-  <rect width="400" height="220" fill="url(#g)"/>
-  <circle cx="320" cy="40"  r="90" fill="${ac}" opacity="0.12" filter="url(#b)"/>
-  <circle cx="60"  cy="180" r="70" fill="${ac}" opacity="0.10" filter="url(#b)"/>
-  <text x="200" y="145" text-anchor="middle" font-family="Georgia,serif"
-        font-size="100" font-weight="700" fill="white" opacity="0.07">${ab}</text>
-  <text x="200" y="130" text-anchor="middle" font-family="Georgia,serif"
-        font-size="46" font-weight="600" fill="white" opacity="0.55">${ab}</text>
-</svg>`;
-
-    try {
-        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg.trim())}`;
-    } catch {
-        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
-            `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="220"><rect width="400" height="220" fill="${c1}"/></svg>`
-        )}`;
-    }
-}
-
 export default function EventCard({ event, index }) {
     const [hovered, setHovered] = useState(false);
-    const [imgError, setImgError] = useState(false);
+    const [imgFailed, setImgFailed] = useState(false);
     const navigate = useNavigate();
 
     const displayDate = formatDateCard(event.date || event.date_time);
     const displayName = formatEventName(event.event_name);
-    const displayLocation = formatLocation(event.location);
 
-    const curatedImg = getEventImage(event);
-    const headerImg = imgError ? buildFallbackSVG(event.event_name, event.id) : curatedImg;
+    // ── Location: city_normalized only, skip "Unknown" ────────────────────
+    const cityNorm = event.city_normalized;
+    const displayLocation =
+        cityNorm && cityNorm !== "Unknown" && cityNorm.trim() !== ""
+            ? cityNorm
+            : "Location TBA";
+
+    // ── Image: always curated Unsplash pool (never scraped image_url) ─────
+    // Falls back to next image in pool if Unsplash itself fails to load
+    const pool = PLATFORM_POOL[event.platform] || POOL_CONFERENCE;
+    const primaryIdx = Math.abs(event.id || 0) % pool.length;
+    const fallbackIdx = (primaryIdx + 1) % pool.length;
+    const headerImg = imgFailed ? pool[fallbackIdx] : pool[primaryIdx];
 
     return (
         <div
@@ -329,7 +266,7 @@ export default function EventCard({ event, index }) {
                         transition: "transform 0.5s ease",
                         transform: hovered ? "scale(1.06)" : "scale(1)",
                     }}
-                    onError={() => setImgError(true)}
+                    onError={() => setImgFailed(true)}
                 />
                 <div style={{
                     position: "absolute", bottom: 0, left: 0, right: 0,
@@ -341,7 +278,7 @@ export default function EventCard({ event, index }) {
             {/* ── Card body ── */}
             <div className="flex flex-col flex-1 p-5 gap-3">
 
-                {/* Date — always "Mon DD, YYYY" */}
+                {/* Date */}
                 <div className="flex items-center gap-1.5">
                     <svg className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#92140c" }}
                         fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -362,7 +299,7 @@ export default function EventCard({ event, index }) {
                     {displayName}
                 </h3>
 
-                {/* Location */}
+                {/* Location — city_normalized only */}
                 <div className="flex items-center gap-1.5">
                     <svg className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#1e1e24", opacity: 0.45 }}
                         fill="none" viewBox="0 0 24 24" stroke="currentColor">

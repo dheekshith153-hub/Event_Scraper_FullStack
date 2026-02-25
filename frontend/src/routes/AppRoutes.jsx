@@ -6,6 +6,7 @@ import Saved from "../pages/Saved";
 import SignIn from "../pages/SignIn";
 import SignUp from "../pages/SignUp";
 import Profile from "../pages/Profile";
+import ScraperHealth from "../pages/ScraperHealth";
 
 export default function AppRoutes() {
     return (
@@ -18,6 +19,7 @@ export default function AppRoutes() {
             <Route path="/signin" element={<SignIn />} />
             <Route path="/signup" element={<SignUp />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/admin/scraper-health" element={<ScraperHealth />} />
             <Route path="*" element={<Navigate to="/welcome" replace />} />
         </Routes>
     );

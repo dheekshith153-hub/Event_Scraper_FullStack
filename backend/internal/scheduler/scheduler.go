@@ -37,6 +37,7 @@ type ScraperStatus struct {
 	EventsFound int
 	Filtered    int
 	Error       string
+	Duration    time.Duration
 }
 
 func New(
@@ -162,6 +163,14 @@ func (s *Scheduler) runScrapingCycle() {
 			fmt.Printf(" | error: %s", st.Error)
 		}
 		fmt.Println()
+
+		// Record scraper health to DB
+		if err := s.db.RecordScraperRun(
+			st.Name, st.Success, st.EventsFound, st.Filtered,
+			st.Error, st.Duration.Seconds(),
+		); err != nil {
+			s.logger.Warn("Failed to record scraper health", zap.String("scraper", st.Name), zap.Error(err))
+		}
 	}
 	fmt.Printf("%s\n\n", strings.Repeat("=", 80))
 }
@@ -201,12 +210,13 @@ func pythonExecutable() string {
 func (s *Scheduler) runHitexPython() ScraperStatus {
 	scriptPath := hitexScriptPath()
 	fmt.Printf("  [HITEX Python] %s\n", scriptPath)
+	runStart := time.Now()
 
 	if _, err := os.Stat(scriptPath); err != nil {
 		msg := fmt.Sprintf("hitex.py not found at: %s", scriptPath)
 		fmt.Println(" ", msg)
 		s.logger.Error("HITEX Python scraper not found", zap.String("expected_path", scriptPath))
-		return ScraperStatus{Name: "hitex (python)", Error: msg}
+		return ScraperStatus{Name: "hitex (python)", Error: msg, Duration: time.Since(runStart)}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -236,7 +246,7 @@ func (s *Scheduler) runHitexPython() ScraperStatus {
 			zap.Error(err),
 			zap.String("output", outputStr),
 		)
-		return ScraperStatus{Name: "hitex (python)", Error: err.Error()}
+		return ScraperStatus{Name: "hitex (python)", Error: err.Error(), Duration: time.Since(runStart)}
 	}
 
 	// Parse "Inserted: N" from Python output
@@ -249,18 +259,19 @@ func (s *Scheduler) runHitexPython() ScraperStatus {
 		}
 	}
 
-	return ScraperStatus{Name: "hitex (python)", Success: true, EventsFound: inserted}
+	return ScraperStatus{Name: "hitex (python)", Success: true, EventsFound: inserted, Duration: time.Since(runStart)}
 }
 
 func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 	name := scraper.Name()
+	runStart := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
 	events, err := scraper.Scrape(ctx)
 	if err != nil {
 		s.logger.Error("Scraper failed", zap.String("scraper", name), zap.Error(err))
-		return ScraperStatus{Name: name, Error: err.Error()}
+		return ScraperStatus{Name: name, Error: err.Error(), Duration: time.Since(runStart)}
 	}
 
 	filtered := 0
@@ -288,7 +299,7 @@ func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 		i, _, err := s.db.InsertBatch(cleanEvents)
 		if err != nil {
 			s.logger.Error("InsertBatch failed", zap.String("scraper", name), zap.Error(err))
-			return ScraperStatus{Name: name, Error: err.Error(), Filtered: filtered}
+			return ScraperStatus{Name: name, Error: err.Error(), Filtered: filtered, Duration: time.Since(runStart)}
 		}
 		inserted = i
 	}
@@ -298,6 +309,7 @@ func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 		Success:     true,
 		EventsFound: inserted,
 		Filtered:    filtered,
+		Duration:    time.Since(runStart),
 	}
 }
 

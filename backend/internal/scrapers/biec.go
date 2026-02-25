@@ -9,12 +9,10 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
 )
 
-
-
 const biecAddress = "BIEC - Bangalore International Exhibition Centre, 10th Mile, Tumkur Road, Madavara Post, Dasanapura Hobli, Bengaluru, Karnataka 562123, India"
-
 
 var techKeywords = []string{
 	"tech", "digital", "software", "hardware", "it ", " it,", "iot",
@@ -28,25 +26,81 @@ var techKeywords = []string{
 	"logistics", "warehouse", "material handling", "supply chain",
 	"print", "packaging", "smart home", "smart office",
 	"cable", "wire", "lift", "mobility",
-	"surface finishing", "coating", "chemical",
+	"surface finishing", "finishing", "coating", "paint", "chemical",
 	"expo", "summit", "conference", "hackathon",
 }
 
-// pastEventRe matches dates that are clearly in the past relative to 2026-02-17.
-// We parse properly below; this is just a quick pre-filter string check.
-var yearRe = regexp.MustCompile(`\b(201[0-9]|202[0-4])\b`)
-
-
-var biecDateFormats = []string{
-	"January 2, 2006",
-	"January 2, 2006",
+var monthNames = []string{
+	"january", "february", "march", "april", "may", "june",
+	"july", "august", "september", "october", "november", "december",
 }
 
-
+var yearOldRe = regexp.MustCompile(`\b(201[0-9]|202[0-4])\b`)
+var yearAnyRe = regexp.MustCompile(`\b(20\d{2})\b`)
 
 type BIECScraper struct {
 	*BaseScraper
 	url string
+}
+
+var techAllow = []string{
+	"automation", "robotics", "robot", "industrial", "manufacturing", "industry",
+	"machine", "machinery", "tool", "tooltech", "imtex", "forming", "digital manufacturing",
+	"electronics", "electronica", "productronica", "semiconductor",
+	"electrical", "power", "energy", "renewable", "solar", "ev", "vehicle", "mobility",
+	"lab", "labex", "laboratory", "pharma", "pharmatech", "biotech", "medtech",
+	"cyber", "security", "cloud", "data", "ai", "artificial intelligence", "machine learning",
+	"warehouse", "logistic", "logistics", "material handling", "supply chain",
+	"surface finishing", "finishing", "coating", "paint",
+	"drone", "space", "aerospace",
+	"wire", "cable",
+	"sap", "microsoft", "google", "salesforce", "hackathon", "teched",
+}
+
+// Non-tech block-list (these should always be excluded)
+var nonTechBlock = []string{
+	"food", "dairy", "bakery", "kitchen", "poultry",
+	"travel", "tourism",
+	"perfume", "agarbatti", "fragrance",
+	"jewellery", "fashion", "apparel",
+	"mattress", "fitness", "family fest", "herbalife",
+	"interior", "décor", "decor", "facades", "doors windows", // usually construction/interiors
+	"acetech", // if you consider this non-tech for your site
+}
+
+// Optional: allow by URL slug hints (helps when titles are short)
+var techURLHints = []string{
+	"electronica", "productronica", "labex", "pharma", "space", "drone",
+	"imtex", "tooltech", "automation", "robot", "manufacturing", "digital",
+	"warehouse", "logistic", "surface", "coating", "cable", "wire", "ev",
+}
+
+func isTechEvent(title string, website string) bool {
+	t := strings.ToLower(cleanSpace(title))
+	u := strings.ToLower(strings.TrimSpace(website))
+
+	// Hard block: if any non-tech phrase appears, reject
+	for _, bad := range nonTechBlock {
+		if strings.Contains(t, bad) {
+			return false
+		}
+	}
+
+	// Strong allow: title contains any tech term
+	for _, good := range techAllow {
+		if strings.Contains(t, good) {
+			return true
+		}
+	}
+
+	// Fallback: URL hints
+	for _, hint := range techURLHints {
+		if strings.Contains(u, hint) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func NewBIECScraper(timeout time.Duration, retries int) *BIECScraper {
@@ -56,9 +110,11 @@ func NewBIECScraper(timeout time.Duration, retries int) *BIECScraper {
 	}
 }
 
-func (s *BIECScraper) Name() string {
-	return "biec"
-}
+func (s *BIECScraper) Name() string { return "biec" }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCRAPE
+// ─────────────────────────────────────────────────────────────────────────────
 
 func (s *BIECScraper) Scrape(ctx context.Context) ([]models.Event, error) {
 	resp, err := s.FetchWithRetry(ctx, s.url)
@@ -73,130 +129,102 @@ func (s *BIECScraper) Scrape(ctx context.Context) ([]models.Event, error) {
 	}
 
 	var events []models.Event
-	baseURL := "https://www.biec.in/"
-	now := time.Now()
+	baseURL := "https://www.biec.in"
+	now := time.Now().Truncate(24 * time.Hour)
 
-	
 	doc.Find("h3").Each(func(_ int, h3 *goquery.Selection) {
 		titleLink := h3.Find("a").First()
-		title := strings.TrimSpace(titleLink.Text())
+		title := cleanSpace(strings.TrimSpace(titleLink.Text()))
 		if title == "" {
 			return
 		}
 
-		
-		href, _ := titleLink.Attr("href")
-		website := ""
-		switch {
-		case strings.HasPrefix(href, "http"):
-			website = href
-		case strings.HasPrefix(href, "/"):
-			website = "https://www.biec.in" + href
-		case href != "":
-			website = baseURL + href // e.g. https://www.biec.in/Calendar_event/2k26/name.php
-		}
+		// Website from title <a>
+		href := strings.TrimSpace(titleLink.AttrOr("href", ""))
+		website := absURL(baseURL, href)
 
-		// FIX 3 + 4: Walk NEXT siblings of <h3> to collect organizer / date /
-		// time / location from text nodes and the <strong> tag.
-		// There are no span wrappers — data lives as raw text between <br> tags.
-		organizer := ""
-		dateStr := ""
-		timeStr := ""
-		location := ""
-		readMoreURL := "" // Prefer "Read More" link over title link when present
-
-		h3.NextAll().EachWithBreak(func(_ int, sib *goquery.Selection) bool {
-			tag := goquery.NodeName(sib)
-
-			// Stop when we hit the next event's <img> or <h3>
-			if tag == "img" || tag == "h3" {
-				return false
-			}
-
-			// FIX 4: Organizer is in <strong>, not <small><b>
-			if tag == "strong" {
-				if organizer == "" {
-					organizer = strings.TrimSpace(sib.Text())
-				}
-				return true
-			}
-
-			// Grab "Read More" absolute URL if present
-			if tag == "a" {
-				if strings.Contains(strings.ToLower(sib.Text()), "read more") {
-					if rHref, ok := sib.Attr("href"); ok && rHref != "" {
-						switch {
-						case strings.HasPrefix(rHref, "http"):
-							readMoreURL = rHref
-						case strings.HasPrefix(rHref, "/"):
-							readMoreURL = "https://www.biec.in" + rHref
-						default:
-							readMoreURL = baseURL + rHref
-						}
-					}
-				}
-				return true
-			}
-
-			// FIX 3: Collect raw text nodes (they come between <br> tags).
-			// Each meaningful line is one of: date, time, location.
-			rawText := strings.TrimSpace(sib.Text())
-			if rawText == "" {
-				return true
-			}
-
-			
-			switch {
-			case isDateText(rawText) && dateStr == "":
-				dateStr = rawText
-			case isTimeText(rawText) && timeStr == "":
-				timeStr = rawText
-			case location == "" && looksLikeLocation(rawText):
-				location = rawText
-			}
-
-			return true
-		})
-
-		// Prefer the "Read More" URL (it's the same page but confirms it exists)
+		// Prefer "Read More" URL if present after this h3
+		readMoreURL := findReadMoreURLAfterH3(h3, baseURL)
 		if readMoreURL != "" {
 			website = readMoreURL
 		}
 
+		// Organizer often in <strong> after h3
+		organizer := ""
+		if st := h3.NextAllFiltered("strong").First(); st.Length() > 0 {
+			organizer = cleanSpace(st.Text())
+		}
+
+		// ✅ CRITICAL FIX:
+		// BIEC puts date/time/location as TEXT NODES between <br>.
+		// goquery.NextAll() only walks ELEMENT siblings, so we must walk real siblings.
+		lines := collectLinesAfterH3(h3)
+
+		dateStr := ""
+		timeStr := ""
+		location := ""
+
+		for _, line := range lines {
+			t := normalizeLine(line)
+			if t == "" {
+				continue
+			}
+
+			if dateStr == "" && looksLikeDate(t) {
+				dateStr = t
+				continue
+			}
+			if timeStr == "" && looksLikeTime(t) {
+				timeStr = t
+				continue
+			}
+			if location == "" && looksLikeLocation(t) {
+				location = t
+				continue
+			}
+		}
+
+		// If location still empty, fall back (site is BIEC)
 		if location == "" {
 			location = "BIEC, Bengaluru, Karnataka"
 		}
 
-		// ── FIX 5: Proper upcoming filter ────────────────────────────────────
-		// The old code never got a date (bug 3), so IsUpcoming("") let
-		// everything through — including events from 2018 through 2025.
-		// Now we parse the real date and compare against today.
+		// If date is still empty, don’t store blank-date events (prevents Date TBA cards)
+		// If you prefer to keep them, change this to: if dateStr == "" { /* keep */ }
+		if dateStr == "" {
+			fmt.Printf("BIEC: missing date for %q (url=%s). Lines=%v\n", title, website, lines)
+			return
+		}
+
+		// Skip clearly old-year strings quickly
+		if yearOldRe.MatchString(dateStr) {
+			return
+		}
+
+		// Only keep upcoming (based on parsed END date of range)
 		if !biecIsUpcoming(dateStr, now) {
 			return
 		}
 
-		// ── FIX 7: Technology relevance filter ───────────────────────────────
-		// BIEC hosts non-tech events (jewellery, food, fitness, fashion).
-		// Only store events whose title matches at least one tech keyword.
-		if !isTechEvent(title) {
+		// Optional: tech relevance filter (keep your current behavior)
+		if !isTechEvent(title, website) {
 			fmt.Printf("BIEC: Skipping non-tech event: %q\n", title)
 			return
 		}
 
-		event := models.Event{
+		events = append(events, models.Event{
 			EventName:   title,
 			Location:    location,
 			Address:     biecAddress,
 			Date:        dateStr,
 			Time:        timeStr,
 			Website:     website,
-			Description: fmt.Sprintf("Organized by: %s", organizer),
+			Description: organizerDescription(organizer),
 			EventType:   "Offline",
 			Platform:    "biec",
-		}
+		})
 
-		events = append(events, event)
-		fmt.Printf("BIEC: Adding event: %q | %s\n", title, dateStr)
+		fmt.Printf("BIEC: adding %q | date=%q | time=%q | loc=%q\n", title, dateStr, timeStr, location)
 	})
 
 	fmt.Printf("BIEC: Found %d upcoming tech events\n", len(events))
@@ -204,21 +232,176 @@ func (s *BIECScraper) Scrape(ctx context.Context) ([]models.Event, error) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HELPERS
+// DOM helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-var monthNames = []string{
-	"january", "february", "march", "april", "may", "june",
-	"july", "august", "september", "october", "november", "december",
+// collectLinesAfterH3 walks *real* siblings (including TEXT nodes) until the next h3/img.
+// It treats <br> and some block tags as line breaks and returns cleaned “lines”.
+func collectLinesAfterH3(h3 *goquery.Selection) []string {
+	n := h3.Get(0)
+	if n == nil {
+		return nil
+	}
+
+	var lines []string
+	var buf strings.Builder
+
+	flush := func() {
+		t := cleanSpace(buf.String())
+		if t != "" {
+			// Sometimes multiple chunks join → keep as one line
+			lines = append(lines, t)
+		}
+		buf.Reset()
+	}
+
+	for sib := n.NextSibling; sib != nil; sib = sib.NextSibling {
+		if sib.Type == html.ElementNode {
+			tag := strings.ToLower(sib.Data)
+
+			// stop at next event block
+			if tag == "h3" || tag == "img" {
+				flush()
+				break
+			}
+
+			// treat <br> as end-of-line
+			if tag == "br" {
+				flush()
+				continue
+			}
+
+			// some elements should flush before/after (paragraph-like)
+			if tag == "p" || tag == "div" || tag == "strong" || tag == "small" {
+				flush()
+				text := cleanSpace(goquery.NewDocumentFromNode(sib).Text())
+				if text != "" {
+					lines = append(lines, text)
+				}
+				flush()
+				continue
+			}
+
+			// anchors etc: add their text to current buffer (don’t force new line)
+			txt := cleanSpace(goquery.NewDocumentFromNode(sib).Text())
+			if txt != "" {
+				if buf.Len() > 0 {
+					buf.WriteString(" ")
+				}
+				buf.WriteString(txt)
+			}
+			continue
+		}
+
+		// TEXT node
+		if sib.Type == html.TextNode {
+			t := cleanSpace(sib.Data)
+			if t != "" {
+				if buf.Len() > 0 {
+					buf.WriteString(" ")
+				}
+				buf.WriteString(t)
+			}
+		}
+	}
+
+	flush()
+	return compactLines(lines)
 }
 
-// isDateText returns true if the string contains a month name and a 4-digit year.
-// Examples that match:
-//   "January 15 - 17, 2026"
-//   "February 26 - March 01, 2026"
-//   "April 6- 8, 2026"
-func isDateText(s string) bool {
+func compactLines(in []string) []string {
+	var out []string
+	for _, s := range in {
+		s = normalizeLine(s)
+		if s == "" {
+			continue
+		}
+		// drop obvious nav text
+		ls := strings.ToLower(s)
+		if strings.Contains(ls, "read more") || strings.Contains(ls, "download") {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+func findReadMoreURLAfterH3(h3 *goquery.Selection, baseURL string) string {
+	readMoreURL := ""
+	h3.NextAllFiltered("a").EachWithBreak(func(_ int, a *goquery.Selection) bool {
+		txt := strings.ToLower(cleanSpace(a.Text()))
+		if strings.Contains(txt, "read more") {
+			href := strings.TrimSpace(a.AttrOr("href", ""))
+			readMoreURL = absURL(baseURL, href)
+			return false
+		}
+		// Stop if we hit next <h3> (different event)
+		if goquery.NodeName(a.Parent()) == "h3" {
+			return false
+		}
+		return true
+	})
+	return readMoreURL
+}
+
+func absURL(base, href string) string {
+	href = strings.TrimSpace(href)
+	if href == "" {
+		return ""
+	}
+	if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
+		return href
+	}
+	if strings.HasPrefix(href, "/") {
+		return base + href
+	}
+	return base + "/" + href
+}
+
+func organizerDescription(org string) string {
+	org = cleanSpace(org)
+	if org == "" {
+		return ""
+	}
+	return fmt.Sprintf("Organized by: %s", org)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Text detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+func normalizeLine(s string) string {
+	s = strings.ReplaceAll(s, "\u00a0", " ")
+	s = strings.ReplaceAll(s, "–", "-")
+	s = strings.ReplaceAll(s, "—", "-")
+	s = cleanSpace(s)
+	return s
+}
+
+func cleanSpace(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+}
+
+func looksLikeLocation(s string) bool {
 	lower := strings.ToLower(s)
+	return strings.Contains(lower, "bengaluru") ||
+		strings.Contains(lower, "bangalore") ||
+		strings.Contains(lower, "karnataka") ||
+		strings.Contains(lower, "india") ||
+		strings.Contains(lower, "biec")
+}
+
+func looksLikeTime(s string) bool {
+	lower := strings.ToLower(s)
+	// covers "9:00am - 6:00pm", "09:00 AM – 06:00 PM"
+	return (strings.Contains(lower, "am") || strings.Contains(lower, "pm")) &&
+		strings.Contains(s, ":")
+}
+
+func looksLikeDate(s string) bool {
+	lower := strings.ToLower(s)
+
+	// must include a month name OR a month short name
 	hasMonth := false
 	for _, m := range monthNames {
 		if strings.Contains(lower, m) {
@@ -226,97 +409,92 @@ func isDateText(s string) bool {
 			break
 		}
 	}
-	return hasMonth && regexp.MustCompile(`\b20\d{2}\b`).MatchString(s)
+	if !hasMonth {
+		// also accept short months like "May", "Apr" etc
+		short := regexp.MustCompile(`\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b`)
+		hasMonth = short.MatchString(lower)
+	}
+
+	// year is strongly expected on BIEC listing
+	return hasMonth && yearAnyRe.MatchString(s)
 }
 
-// isTimeText returns true if the string looks like a time range.
-// Examples: "9:00am - 6:00pm", "10:00am - 5:00pm"
-func isTimeText(s string) bool {
-	lower := strings.ToLower(s)
-	return (strings.Contains(lower, "am") || strings.Contains(lower, "pm")) &&
-		strings.Contains(s, ":")
-}
-
-// looksLikeLocation returns true for city/state strings like "Bengaluru, Karnataka".
-func looksLikeLocation(s string) bool {
-	lower := strings.ToLower(s)
-	return strings.Contains(lower, "bengaluru") ||
-		strings.Contains(lower, "bangalore") ||
-		strings.Contains(lower, "karnataka") ||
-		strings.Contains(lower, "india")
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
+// Upcoming logic
+// ─────────────────────────────────────────────────────────────────────────────
 
 func biecIsUpcoming(dateStr string, now time.Time) bool {
-	if dateStr == "" {
-		// No date found — include it so we don't silently miss events
+	end := extractEndDateForBIEC(dateStr)
+	t, ok := parseBIECEndDate(end)
+	if !ok {
+		// If parse fails, keep it (or set false if you prefer strict)
+		fmt.Printf("BIEC: could not parse date %q (end=%q) — keeping\n", dateStr, end)
 		return true
 	}
+	return !t.Before(now)
+}
 
-	// Quick reject on clearly old years (2010–2024)
-	if m := yearRe.FindString(dateStr); m != "" {
-		return false
-	}
-
-	// Normalize: remove spaces around dashes that separate day ranges
-	// "April 6- 8, 2026" → "April 6-8, 2026"
-	normalized := regexp.MustCompile(`\s*-\s*`).ReplaceAllString(dateStr, "-")
-
-	
-	endDate := extractEndDate(normalized)
+func parseBIECEndDate(s string) (time.Time, bool) {
+	s = normalizeLine(s)
 
 	layouts := []string{
 		"January 2, 2006",
 		"January 02, 2006",
 		"Jan 2, 2006",
 		"Jan 02, 2006",
+		"2 January 2006",
+		"02 January 2006",
+		"2 Jan 2006",
+		"02 Jan 2006",
 	}
+
 	for _, layout := range layouts {
-		t, err := time.Parse(layout, endDate)
-		if err == nil {
-			// Event is upcoming if its end date is today or later
-			return !t.Before(now.Truncate(24 * time.Hour))
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Truncate(24 * time.Hour), true
 		}
 	}
 
-	// Parse failed — include rather than silently discard
-	fmt.Printf("BIEC: could not parse date %q (normalized: %q) — including event\n", dateStr, endDate)
-	return true
+	return time.Time{}, false
 }
 
+// extractEndDateForBIEC tries hard to turn ranges into a single end-date string.
+// Examples handled:
+// - "May 27 - 29, 2026"           -> "May 29, 2026"
+// - "May 27-29, 2026"             -> "May 29, 2026"
+// - "May 27 to 29, 2026"          -> "May 29, 2026"
+// - "February 26 - March 01, 2026"-> "March 01, 2026"
+// - "27-29 May 2026"              -> "29 May 2026"
+// - "27 May - 29 May 2026"        -> "29 May 2026"
+// - "May 27, 2026"                -> itself
+func extractEndDateForBIEC(s string) string {
+	s = normalizeLine(s)
 
-func extractEndDate(s string) string {
-	// Cross-month: "February 26-March 01, 2026"
-	// Pattern: Month Day-Month Day, Year
-	crossMonth := regexp.MustCompile(
-		`(?i)([A-Za-z]+ \d{1,2})-([A-Za-z]+ \d{1,2}),\s*(\d{4})`,
-	)
-	if m := crossMonth.FindStringSubmatch(s); len(m) == 4 {
-		// End date is "March 01, 2026"
-		return m[2] + ", " + m[3]
+	// 1) Cross-month: "February 26 - March 01, 2026" (dash or "to")
+	crossMonth := regexp.MustCompile(`(?i)\b([A-Za-z]+)\s+\d{1,2}\s*(?:-|to)\s*([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})\b`)
+	if m := crossMonth.FindStringSubmatch(s); len(m) == 5 {
+		// "March 01, 2026"
+		return fmt.Sprintf("%s %s, %s", m[2], m[3], m[4])
 	}
 
-	// Same-month range: "April 6-8, 2026" or "January 15-17, 2026"
-	sameMonth := regexp.MustCompile(
-		`(?i)([A-Za-z]+) \d{1,2}-(\d{1,2}),\s*(\d{4})`,
-	)
-	if m := sameMonth.FindStringSubmatch(s); len(m) == 4 {
-		// End date is "April 8, 2026"
-		return m[1] + " " + m[2] + ", " + m[3]
+	// 2) Same-month: "May 27 - 29, 2026" or "May 27 to 29, 2026"
+	sameMonth := regexp.MustCompile(`(?i)\b([A-Za-z]+)\s+(\d{1,2})\s*(?:-|to)\s*(\d{1,2}),\s*(\d{4})\b`)
+	if m := sameMonth.FindStringSubmatch(s); len(m) == 5 {
+		return fmt.Sprintf("%s %s, %s", m[1], m[3], m[4])
 	}
 
-	// Single day: "February 17, 2026" — return as-is
+	// 3) Day-first range: "27-29 May 2026"
+	dayFirst := regexp.MustCompile(`(?i)\b(\d{1,2})\s*(?:-|to)\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\b`)
+	if m := dayFirst.FindStringSubmatch(s); len(m) == 5 {
+		return fmt.Sprintf("%s %s %s", m[2], m[3], m[4]) // "29 May 2026"
+	}
+
+	// 4) Day+Month range: "27 May - 29 May 2026"
+	dayMonthRange := regexp.MustCompile(`(?i)\b(\d{1,2})\s+([A-Za-z]+)\s*(?:-|to)\s*(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})\b`)
+	if m := dayMonthRange.FindStringSubmatch(s); len(m) == 6 {
+		return fmt.Sprintf("%s %s %s", m[3], m[4], m[5]) // "29 May 2026"
+	}
+
+	// 5) Already single date
 	return s
 }
 
-// isTechEvent returns true if the event title contains at least one
-// technology-related keyword (case-insensitive).
-func isTechEvent(title string) bool {
-	lower := strings.ToLower(title)
-	for _, kw := range techKeywords {
-		if strings.Contains(lower, kw) {
-			return true
-		}
-	}
-	return false
-}

@@ -5,11 +5,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	html_pkg "html"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/chromedp/chromedp"
@@ -215,6 +218,32 @@ func (s *DetailScraper) scrapeEventDetailPage(ctx context.Context, event EventFr
 		detail = s.parseEChaiDetail(doc, event)
 	default:
 		detail = s.parseGenericDetail(doc, event)
+	}
+
+	// ── Post-processing: clean to plain text and summarize ──
+	if detail.FullDescription != "" {
+		plainText := cleanToPlainText(detail.FullDescription)
+		detail.FullDescription = summarizeToOneParagraph(plainText, 500)
+	}
+
+	// ── Google Search fallback when all selectors fail ──
+	if len(strings.TrimSpace(detail.FullDescription)) < 30 {
+		fmt.Printf("   ⚠️  Description too short (%d chars), trying Google fallback\n", len(detail.FullDescription))
+		googleDesc := s.searchEventOnGoogle(ctx, event.Name, event.Platform)
+		if googleDesc != "" {
+			detail.FullDescription = summarizeToOneParagraph(googleDesc, 500)
+		}
+	}
+
+	// ── Final fallback: use og:description or meta description ──
+	if len(strings.TrimSpace(detail.FullDescription)) < 30 {
+		if desc, exists := doc.Find("meta[property='og:description']").First().Attr("content"); exists && len(desc) > 30 {
+			detail.FullDescription = summarizeToOneParagraph(cleanToPlainText(desc), 500)
+			fmt.Printf("   ℹ️  Used og:description fallback\n")
+		} else if desc, exists := doc.Find("meta[name='description']").First().Attr("content"); exists && len(desc) > 30 {
+			detail.FullDescription = summarizeToOneParagraph(cleanToPlainText(desc), 500)
+			fmt.Printf("   ℹ️  Used meta description fallback\n")
+		}
 	}
 
 	detail.ScrapedBody = truncateString(bodyHTML, 50000)
@@ -696,6 +725,196 @@ func sanitizeHTML(html string) string {
 	html = regexp.MustCompile(`>\s{3,}<`).ReplaceAllString(html, "><")
 	html = strings.ReplaceAll(html, "\x00", "")
 	return strings.TrimSpace(html)
+}
+
+// cleanToPlainText converts HTML to clean, readable plain text.
+// Strips ALL markup, decodes entities, removes special/control characters.
+func cleanToPlainText(htmlStr string) string {
+	// 1. Remove script, style, noscript, iframe blocks entirely
+	htmlStr = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`).ReplaceAllString(htmlStr, "")
+	htmlStr = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`).ReplaceAllString(htmlStr, "")
+	htmlStr = regexp.MustCompile(`(?is)<noscript[^>]*>.*?</noscript>`).ReplaceAllString(htmlStr, "")
+	htmlStr = regexp.MustCompile(`(?is)<iframe[^>]*>.*?</iframe>`).ReplaceAllString(htmlStr, "")
+
+	// 2. Replace block-level tags with newlines for sentence boundaries
+	htmlStr = regexp.MustCompile(`(?i)<br\s*/?>|</p>|</div>|</li>|</h[1-6]>|</tr>`).ReplaceAllString(htmlStr, "\n")
+
+	// 3. Strip all remaining HTML tags
+	htmlStr = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(htmlStr, "")
+
+	// 4. Decode HTML entities
+	htmlStr = html_pkg.UnescapeString(htmlStr)
+
+	// 5. Remove zero-width and invisible Unicode characters
+	htmlStr = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t' || r == ' ':
+			return r
+		case r < 0x20: // control chars
+			return -1
+		case r == 0x200B || r == 0x200C || r == 0x200D || r == 0xFEFF: // zero-width
+			return -1
+		case r == 0x00A0: // non-breaking space → regular space
+			return ' '
+		case unicode.Is(unicode.Cf, r): // format characters
+			return -1
+		default:
+			return r
+		}
+	}, htmlStr)
+
+	// 6. Remove decorative/bullet characters
+	bulletChars := regexp.MustCompile(`[◆❖•➤→▸✦★✓✔✗✘►▶◉○●■□▪▫⬤⬛⬜♦♣♠♥▲▼◀▻△▽◁▷⟶⟹⟵⇒⇐⇔]`)
+	htmlStr = bulletChars.ReplaceAllString(htmlStr, "")
+
+	// 7. Remove emoji (keep basic punctuation and letters)
+	emojiRe := regexp.MustCompile(`[\x{1F000}-\x{1FFFF}\x{2600}-\x{27BF}\x{FE00}-\x{FE0F}\x{1F900}-\x{1F9FF}]`)
+	htmlStr = emojiRe.ReplaceAllString(htmlStr, "")
+
+	// 8. Collapse excessive whitespace
+	htmlStr = regexp.MustCompile(`[ \t]+`).ReplaceAllString(htmlStr, " ")
+	htmlStr = regexp.MustCompile(`\n\s*\n+`).ReplaceAllString(htmlStr, "\n")
+
+	// 9. Trim each line and remove empty ones
+	lines := strings.Split(htmlStr, "\n")
+	var cleaned []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			cleaned = append(cleaned, line)
+		}
+	}
+
+	return strings.Join(cleaned, " ")
+}
+
+// summarizeToOneParagraph takes clean plain text and produces a meaningful
+// single paragraph of 100-500 characters. It picks the first few complete
+// sentences, discarding boilerplate like navigation, CTAs, and dates.
+func summarizeToOneParagraph(text string, maxLen int) string {
+	if text == "" {
+		return ""
+	}
+	if maxLen == 0 {
+		maxLen = 500
+	}
+
+	// Drop lines that are likely boilerplate
+	boilerplate := regexp.MustCompile(`(?i)^(register|sign up|book now|click here|read more|learn more|subscribe|follow us|join us|share this|copyright|all rights reserved|powered by|home|about|contact|terms|privacy|cookie|menu|search|login|sign in|back|next|×|close|call for|submit your|cfp|newsletter|stay in the loop|also check out|are you interested|agenda:?\s*$|schedule:?\s*$)`)
+	urlLine := regexp.MustCompile(`^https?://\S+$`)
+	shortLine := regexp.MustCompile(`^.{1,15}$`)
+	dateLine := regexp.MustCompile(`(?i)^(monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))`)
+	priceLine := regexp.MustCompile(`(?i)^(free|₹|\$|registration fee|early bird)`)
+
+	// Split into sentences using period, exclamation, or question mark
+	sentences := regexp.MustCompile(`([.!?])\s+`).Split(text, -1)
+
+	var goodSentences []string
+	totalLen := 0
+
+	for _, sent := range sentences {
+		sent = strings.TrimSpace(sent)
+		if sent == "" || len(sent) < 15 {
+			continue
+		}
+		if boilerplate.MatchString(sent) || urlLine.MatchString(sent) ||
+			shortLine.MatchString(sent) || dateLine.MatchString(sent) ||
+			priceLine.MatchString(sent) {
+			continue
+		}
+
+		goodSentences = append(goodSentences, sent)
+		totalLen += len(sent)
+
+		if totalLen >= maxLen || len(goodSentences) >= 5 {
+			break
+		}
+	}
+
+	if len(goodSentences) == 0 {
+		// Fallback: just take the first maxLen chars of the text
+		if len(text) > maxLen {
+			// Find last space before maxLen to avoid cutting mid-word
+			cut := strings.LastIndex(text[:maxLen], " ")
+			if cut > 0 {
+				return strings.TrimSpace(text[:cut]) + "."
+			}
+			return strings.TrimSpace(text[:maxLen])
+		}
+		return strings.TrimSpace(text)
+	}
+
+	result := strings.Join(goodSentences, ". ")
+	// Ensure it ends with a period
+	if !strings.HasSuffix(result, ".") && !strings.HasSuffix(result, "!") && !strings.HasSuffix(result, "?") {
+		result += "."
+	}
+
+	if len(result) > maxLen {
+		cut := strings.LastIndex(result[:maxLen], ". ")
+		if cut > 0 {
+			return result[:cut+1]
+		}
+		cut = strings.LastIndex(result[:maxLen], " ")
+		if cut > 0 {
+			return result[:cut] + "."
+		}
+	}
+
+	return result
+}
+
+// searchEventOnGoogle uses Google search to find event information when
+// direct CSS selectors fail. It searches for the event name + platform,
+// fetches the search result page, and extracts snippets.
+func (s *DetailScraper) searchEventOnGoogle(ctx context.Context, eventName string, platform string) string {
+	query := fmt.Sprintf("%s %s event", eventName, platform)
+	searchURL := "https://www.google.com/search?q=" + url.QueryEscape(query) + "&hl=en"
+
+	fmt.Printf("   🔍 Google fallback: %s\n", query)
+
+	bodyBytes, err := s.fetchURL(ctx, searchURL)
+	if err != nil {
+		fmt.Printf("   ⚠️  Google search failed: %v\n", err)
+		return ""
+	}
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(string(bodyBytes)))
+	if err != nil {
+		fmt.Printf("   ⚠️  Google parse failed: %v\n", err)
+		return ""
+	}
+
+	// Extract search result snippets
+	var snippets []string
+	doc.Find(".VwiC3b, .lEBKkf, .st, [data-sncf], .IsZvec").Each(func(_ int, el *goquery.Selection) {
+		text := strings.TrimSpace(el.Text())
+		if len(text) > 40 {
+			snippets = append(snippets, text)
+		}
+	})
+
+	// Also try meta description from og:description
+	if desc, exists := doc.Find("meta[name='description']").First().Attr("content"); exists && len(desc) > 40 {
+		snippets = append([]string{desc}, snippets...)
+	}
+
+	if len(snippets) == 0 {
+		fmt.Printf("   ⚠️  Google: no snippets found\n")
+		return ""
+	}
+
+	// Take the longest/most informative snippet
+	best := snippets[0]
+	for _, s := range snippets {
+		if len(s) > len(best) {
+			best = s
+		}
+	}
+
+	result := cleanToPlainText(best)
+	fmt.Printf("   ✅ Google: got %d chars\n", len(result))
+	return result
 }
 
 // ========== HELPERS ==========

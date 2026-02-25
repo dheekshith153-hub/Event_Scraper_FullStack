@@ -86,7 +86,7 @@ var nonTechKeywords = []string{
 	"meditation", "spiritual", "prayer", "puja", "bhajan", "kirtan",
 	"cricket", "football", "marathon", "cyclothon", "swimming",
 	"real estate property", "astrology", "tarot", "numerology",
-	"kids crafts", "parenting workshop", "course", "demo", "workshop", "seminar"
+	"kids crafts", "parenting workshop", "course", "demo", "workshop", "seminar", "business",
 }
 
 type AllEventsScraper struct {

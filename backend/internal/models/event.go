@@ -1,27 +1,29 @@
 package models
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"strings"
-	"time"
+    "crypto/sha256"
+    "encoding/hex"
+    "event-scraper/internal/utils"
+    "strings"
+    "time"
 )
 
 type Event struct {
-	ID          int64     `json:"id"`
-	EventName   string    `json:"event_name"`
-	Location    string    `json:"location"`
-	DateTime    string    `json:"date_time"`
-	Date        string    `json:"date"`
-	Time        string    `json:"time"`
-	Website     string    `json:"website"`
-	Description string    `json:"description"`
-	Address     string    `json:"address"`
-	EventType   string    `json:"event_type"`
-	Platform    string    `json:"platform"`
-	Hash        string    `json:"hash"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID             int64     `json:"id"`
+	EventName      string    `json:"event_name"`
+	Location       string    `json:"location"`
+	CityNormalized string    `json:"city_normalized"` // ← NEW: canonical city for filtering
+	DateTime       string    `json:"date_time"`
+	Date           string    `json:"date"`
+	Time           string    `json:"time"`
+	Website        string    `json:"website"`
+	Description    string    `json:"description"`
+	Address        string    `json:"address"`
+	EventType      string    `json:"event_type"`
+	Platform       string    `json:"platform"`
+	Hash           string    `json:"hash"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // GenerateHash creates a unique hash for duplicate detection.
@@ -51,7 +53,7 @@ func (e *Event) GenerateHash() {
 	e.Hash = hex.EncodeToString(h[:])
 }
 
-// Normalize cleans and standardizes event data
+// Normalize cleans and standardizes event data, and derives CityNormalized.
 func (e *Event) Normalize() {
 	e.EventName = strings.TrimSpace(e.EventName)
 	e.Location = strings.TrimSpace(e.Location)
@@ -75,6 +77,16 @@ func (e *Event) Normalize() {
 		} else {
 			e.EventType = "Offline"
 		}
+	}
+
+	// ── Derive canonical city ─────────────────────────────────────────────
+	// Try Location first; fall back to Address if Location gives "Unknown".
+	if e.CityNormalized == "" || e.CityNormalized == "Unknown" {
+		city := utils.ExtractCity(e.Location)
+		if city == "Unknown" && e.Address != "" {
+			city = utils.ExtractCity(e.Address)
+		}
+		e.CityNormalized = city
 	}
 }
 

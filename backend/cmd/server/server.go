@@ -25,7 +25,6 @@ import (
 
 var jwtSecret = []byte(getEnv("JWT_SECRET", "event-scraper-secret-key-change-me"))
 
-
 var cityKeywords = []struct {
 	keyword string
 	display string
@@ -213,7 +212,6 @@ var cityKeywords = []struct {
 	{"webinar", "Online"},
 }
 
-
 func extractCity(location string) string {
 	lower := strings.ToLower(location)
 	for _, ck := range cityKeywords {
@@ -224,20 +222,20 @@ func extractCity(location string) string {
 	return ""
 }
 
-func cityToCondition(city string, argIdx int) (string, []interface{}) {
+func cityToCondition(alias string, city string, argIdx int) (string, []interface{}) {
 	var patterns []string
 	var args []interface{}
 
 	for _, ck := range cityKeywords {
 		if ck.display == city {
-			patterns = append(patterns, fmt.Sprintf("e.location ILIKE $%d", argIdx))
+			patterns = append(patterns, fmt.Sprintf("%s.location ILIKE $%d", alias, argIdx))
 			args = append(args, "%"+ck.keyword+"%")
 			argIdx++
 		}
 	}
 
 	if len(patterns) == 0 {
-		return fmt.Sprintf("e.location ILIKE $%d", argIdx), []interface{}{"%" + city + "%"}
+		return fmt.Sprintf("%s.location ILIKE $%d", alias, argIdx), []interface{}{"%" + city + "%"}
 	}
 
 	return "(" + strings.Join(patterns, " OR ") + ")", args
@@ -245,21 +243,22 @@ func cityToCondition(city string, argIdx int) (string, []interface{}) {
 
 // ─── Models ───────────────────────────────────────────────────────────────────
 
-// ✅ ImageURL added — populated from event_details via LEFT JOIN in all queries
+// ✅ city_normalized added — canonical city name for display on cards/detail
 type Event struct {
-	ID          int       `json:"id"`
-	EventName   string    `json:"event_name"`
-	Location    string    `json:"location"`
-	DateTime    string    `json:"date_time"`
-	Date        string    `json:"date"`
-	Time        string    `json:"time"`
-	Website     string    `json:"website"`
-	Description string    `json:"description"`
-	Address     string    `json:"address"`
-	EventType   string    `json:"event_type"`
-	Platform    string    `json:"platform"`
-	ImageURL    string    `json:"image_url"` // ✅ NEW: from event_details LEFT JOIN
-	CreatedAt   time.Time `json:"created_at"`
+	ID             int       `json:"id"`
+	EventName      string    `json:"event_name"`
+	Location       string    `json:"location"`
+	CityNormalized string    `json:"city_normalized"` // ✅ NEW
+	DateTime       string    `json:"date_time"`
+	Date           string    `json:"date"`
+	Time           string    `json:"time"`
+	Website        string    `json:"website"`
+	Description    string    `json:"description"`
+	Address        string    `json:"address"`
+	EventType      string    `json:"event_type"`
+	Platform       string    `json:"platform"`
+	ImageURL       string    `json:"image_url"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type EventDetail struct {
@@ -393,6 +392,23 @@ func main() {
 	}
 
 	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS scraper_runs (
+		  id               SERIAL PRIMARY KEY,
+		  scraper_name     VARCHAR(100) NOT NULL,
+		  success          BOOLEAN NOT NULL DEFAULT false,
+		  events_found     INTEGER DEFAULT 0,
+		  events_filtered  INTEGER DEFAULT 0,
+		  error_message    TEXT,
+		  duration_seconds REAL DEFAULT 0,
+		  run_at           TIMESTAMP NOT NULL DEFAULT NOW()
+		);
+	`); err != nil {
+		log.Printf("⚠️  Could not ensure scraper_runs table: %v", err)
+	} else {
+		log.Println("✅ Scraper runs table ready")
+	}
+
+	if _, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS saved_events (
 		  id         SERIAL PRIMARY KEY,
 		  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -419,6 +435,7 @@ func main() {
 	mux.HandleFunc("/api/events/", s.withCORS(s.handleEventRoutes))
 	mux.HandleFunc("/api/saved-events", s.withCORS(s.requireAuth(s.handleGetSavedEvents)))
 	mux.HandleFunc("/api/scrape/details", s.withCORS(s.handleManualDetailScrape))
+	mux.HandleFunc("/api/admin/scraper-health", s.withCORS(s.handleScraperHealth))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
@@ -615,8 +632,48 @@ func parseJWT(tokenStr string) (jwt.MapClaims, error) {
 
 // ─── Event Handlers ───────────────────────────────────────────────────────────
 
+// scanEvent scans a full event row including city_normalized and image_url.
+// Column order must match: id, event_name, location, city_normalized, date_time,
+// date, time, website, description, address, event_type, platform, image_url, created_at
+func scanEvent(row interface {
+	Scan(...interface{}) error
+}, e *Event) error {
+	return row.Scan(
+		&e.ID, &e.EventName, &e.Location, &e.CityNormalized,
+		&e.DateTime, &e.Date, &e.Time,
+		&e.Website, &e.Description, &e.Address,
+		&e.EventType, &e.Platform, &e.ImageURL,
+		&e.CreatedAt,
+	)
+}
+
+// eventSelectCols returns the standard SELECT column list for an event joined
+// with event_details. Caller must supply the events alias (e.g. "e") and
+// event_details alias (e.g. "ed").
+func eventSelectCols(eAlias, edAlias string) string {
+	return fmt.Sprintf(`
+		%s.id,
+		COALESCE(%s.event_name, '')      AS event_name,
+		COALESCE(%s.location, '')        AS location,
+		COALESCE(%s.city_normalized, '') AS city_normalized,
+		COALESCE(%s.date_time, '')       AS date_time,
+		COALESCE(%s.date, '')            AS date,
+		COALESCE(%s.time, '')            AS time,
+		COALESCE(%s.website, '')         AS website,
+		COALESCE(%s.description, '')     AS description,
+		COALESCE(%s.address, '')         AS address,
+		COALESCE(%s.event_type, '')      AS event_type,
+		COALESCE(%s.platform, '')        AS platform,
+		COALESCE(%s.image_url, '')       AS image_url,
+		%s.created_at`,
+		eAlias,
+		eAlias, eAlias, eAlias, eAlias, eAlias, eAlias, eAlias, eAlias, eAlias, eAlias, eAlias,
+		edAlias,
+		eAlias,
+	)
+}
+
 // GET /api/events
-// ✅ LEFT JOIN event_details to include image_url on every card
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -646,62 +703,48 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	if search != "" {
 		conditions = append(conditions, fmt.Sprintf(
-			"(e.event_name ILIKE $%d OR e.description ILIKE $%d OR e.location ILIKE $%d)",
+			"(inner_e.event_name ILIKE $%d OR inner_e.description ILIKE $%d OR inner_e.location ILIKE $%d)",
 			idx, idx, idx,
 		))
 		args = append(args, "%"+search+"%")
 		idx++
 	}
 
+	// ✅ Filter on city_normalized for clean city matching
 	if location != "" {
-		cond, cityArgs := cityToCondition(location, idx)
-		conditions = append(conditions, cond)
-		args = append(args, cityArgs...)
-		idx += len(cityArgs)
+		conditions = append(conditions, fmt.Sprintf("inner_e.city_normalized = $%d", idx))
+		args = append(args, location)
+		idx++
 	}
 
 	if source != "" {
-		conditions = append(conditions, fmt.Sprintf("e.platform = $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("inner_e.platform = $%d", idx))
 		args = append(args, source)
 		idx++
 	}
 	if dateFrom != "" {
-		conditions = append(conditions, fmt.Sprintf("e.date >= $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("inner_e.date >= $%d", idx))
 		args = append(args, dateFrom)
 		idx++
 	}
 	if dateTo != "" {
-		conditions = append(conditions, fmt.Sprintf("e.date <= $%d", idx))
+		conditions = append(conditions, fmt.Sprintf("inner_e.date <= $%d", idx))
 		args = append(args, dateTo)
 		idx++
 	}
 
 	where := "WHERE " + strings.Join(conditions, " AND ")
 
-	// Count uses a simpler query without the JOIN for performance
 	var total int
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM events e %s", where)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM events inner_e %s", where)
 	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
 		jsonError(w, "Failed to count events: "+err.Error(), 500)
 		return
 	}
 
-	// ✅ LEFT JOIN event_details to pull image_url into every event row
+	cols := eventSelectCols("e", "ed")
 	eventsQuery := fmt.Sprintf(`
-		SELECT
-			e.id,
-			COALESCE(e.event_name, '')  AS event_name,
-			COALESCE(e.location, '')    AS location,
-			COALESCE(e.date_time, '')   AS date_time,
-			COALESCE(e.date, '')        AS date,
-			COALESCE(e.time, '')        AS time,
-			COALESCE(e.website, '')     AS website,
-			COALESCE(e.description, '') AS description,
-			COALESCE(e.address, '')     AS address,
-			COALESCE(e.event_type, '')  AS event_type,
-			COALESCE(e.platform, '')    AS platform,
-			COALESCE(ed.image_url, '')  AS image_url,
-			e.created_at
+		SELECT %s
 		FROM (
 			SELECT inner_e.*,
 				ROW_NUMBER() OVER (
@@ -725,7 +768,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			END ASC,
 			e.platform ASC
 		LIMIT $%d OFFSET $%d
-	`, where, idx, idx+1)
+	`, cols, where, idx, idx+1)
 
 	rows, err := s.db.Query(eventsQuery, append(args, limit, offset)...)
 	if err != nil {
@@ -737,20 +780,20 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	events := []Event{}
 	for rows.Next() {
 		var e Event
-		err := rows.Scan(
-			&e.ID, &e.EventName, &e.Location,
+		if err := rows.Scan(
+			&e.ID, &e.EventName, &e.Location, &e.CityNormalized,
 			&e.DateTime, &e.Date, &e.Time,
 			&e.Website, &e.Description, &e.Address,
-			&e.EventType, &e.Platform, &e.ImageURL, // ✅ image_url scanned here
+			&e.EventType, &e.Platform, &e.ImageURL,
 			&e.CreatedAt,
-		)
-		if err != nil {
+		); err != nil {
 			log.Printf("Row scan error: %v", err)
 			continue
 		}
 		events = append(events, e)
 	}
 
+	// ✅ Locations from city_normalized column — clean city names only
 	locations := s.distinctCities()
 	sources := s.distinctValues("platform")
 
@@ -779,7 +822,6 @@ func (s *Server) handleFilters(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/events/:id
-// ✅ image_url included on the event object itself via LEFT JOIN
 func (s *Server) handleEventDetail(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -800,20 +842,16 @@ func (s *Server) handleEventDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var e Event
-	err = s.db.QueryRow(`
-		SELECT e.id, COALESCE(e.event_name, ''), COALESCE(e.location, ''),
-		       COALESCE(e.date_time, ''), COALESCE(e.date, ''), COALESCE(e.time, ''),
-		       COALESCE(e.website, ''), COALESCE(e.description, ''), COALESCE(e.address, ''),
-		       COALESCE(e.event_type, ''), COALESCE(e.platform, ''),
-		       COALESCE(ed.image_url, '') AS image_url,
-		       e.created_at
+	err = s.db.QueryRow(fmt.Sprintf(`
+		SELECT %s
 		FROM events e
 		LEFT JOIN event_details ed ON e.id = ed.event_id
 		WHERE e.id = $1
-	`, eventID).Scan(
-		&e.ID, &e.EventName, &e.Location, &e.DateTime,
-		&e.Date, &e.Time, &e.Website, &e.Description,
-		&e.Address, &e.EventType, &e.Platform, &e.ImageURL,
+	`, eventSelectCols("e", "ed")), eventID).Scan(
+		&e.ID, &e.EventName, &e.Location, &e.CityNormalized,
+		&e.DateTime, &e.Date, &e.Time,
+		&e.Website, &e.Description, &e.Address,
+		&e.EventType, &e.Platform, &e.ImageURL,
 		&e.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -825,7 +863,6 @@ func (s *Server) handleEventDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get full event_details row (description, organizer, tags etc.)
 	var detail EventDetail
 	err = s.db.QueryRow(`
 		SELECT id, event_id, COALESCE(full_description, ''), COALESCE(organizer, ''),
@@ -875,7 +912,6 @@ func (s *Server) handleEventDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/events/:id/recommended
-// ✅ LEFT JOIN event_details so recommended cards have image_url
 func (s *Server) handleRecommendedEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -895,31 +931,26 @@ func (s *Server) handleRecommendedEvents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var platform, location string
+	var platform, cityNorm string
 	err = s.db.QueryRow(`
-		SELECT COALESCE(platform, ''), COALESCE(location, '') FROM events WHERE id = $1
-	`, eventID).Scan(&platform, &location)
+		SELECT COALESCE(platform, ''), COALESCE(city_normalized, '') FROM events WHERE id = $1
+	`, eventID).Scan(&platform, &cityNorm)
 	if err != nil {
 		jsonOK(w, map[string]interface{}{"events": []Event{}, "total": 0})
 		return
 	}
 
-	rows, err := s.db.Query(`
-		SELECT e.id, COALESCE(e.event_name, ''), COALESCE(e.location, ''),
-		       COALESCE(e.date_time, ''), COALESCE(e.date, ''), COALESCE(e.time, ''),
-		       COALESCE(e.website, ''), COALESCE(e.description, ''), COALESCE(e.address, ''),
-		       COALESCE(e.event_type, ''), COALESCE(e.platform, ''),
-		       COALESCE(ed.image_url, '') AS image_url,
-		       e.created_at
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT %s
 		FROM events e
 		LEFT JOIN event_details ed ON e.id = ed.event_id
 		WHERE e.id != $1
-		  AND (e.platform = $2 OR e.location ILIKE $3)
+		  AND (e.platform = $2 OR e.city_normalized = $3)
 		ORDER BY
 			CASE WHEN e.platform = $2 THEN 0 ELSE 1 END,
 			e.created_at DESC
 		LIMIT 10
-	`, eventID, platform, "%"+location+"%")
+	`, eventSelectCols("e", "ed")), eventID, platform, cityNorm)
 	if err != nil {
 		jsonOK(w, map[string]interface{}{"events": []Event{}, "total": 0})
 		return
@@ -930,9 +961,10 @@ func (s *Server) handleRecommendedEvents(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var ev Event
 		if err := rows.Scan(
-			&ev.ID, &ev.EventName, &ev.Location, &ev.DateTime,
-			&ev.Date, &ev.Time, &ev.Website, &ev.Description,
-			&ev.Address, &ev.EventType, &ev.Platform, &ev.ImageURL,
+			&ev.ID, &ev.EventName, &ev.Location, &ev.CityNormalized,
+			&ev.DateTime, &ev.Date, &ev.Time,
+			&ev.Website, &ev.Description, &ev.Address,
+			&ev.EventType, &ev.Platform, &ev.ImageURL,
 			&ev.CreatedAt,
 		); err == nil {
 			events = append(events, ev)
@@ -1038,7 +1070,6 @@ func (s *Server) handleUnsaveEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/saved-events
-// ✅ LEFT JOIN event_details so saved event cards have image_url
 func (s *Server) handleGetSavedEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1051,21 +1082,16 @@ func (s *Server) handleGetSavedEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.db.Query(`
+	rows, err := s.db.Query(fmt.Sprintf(`
 		SELECT
 			se.id, se.event_id, COALESCE(se.notes, ''), se.saved_at,
-			e.id, COALESCE(e.event_name, ''), COALESCE(e.location, ''),
-			COALESCE(e.date_time, ''), COALESCE(e.date, ''), COALESCE(e.time, ''),
-			COALESCE(e.website, ''), COALESCE(e.description, ''), COALESCE(e.address, ''),
-			COALESCE(e.event_type, ''), COALESCE(e.platform, ''),
-			COALESCE(ed.image_url, '') AS image_url,
-			e.created_at
+			%s
 		FROM saved_events se
 		JOIN events e ON se.event_id = e.id
 		LEFT JOIN event_details ed ON e.id = ed.event_id
 		WHERE se.user_id = $1
 		ORDER BY se.saved_at DESC
-	`, userID)
+	`, eventSelectCols("e", "ed")), userID)
 	if err != nil {
 		jsonError(w, "Database error: "+err.Error(), 500)
 		return
@@ -1086,9 +1112,10 @@ func (s *Server) handleGetSavedEvents(w http.ResponseWriter, r *http.Request) {
 		var ev Event
 		err := rows.Scan(
 			&se.ID, &se.EventID, &se.Notes, &se.SavedAt,
-			&ev.ID, &ev.EventName, &ev.Location, &ev.DateTime,
-			&ev.Date, &ev.Time, &ev.Website, &ev.Description,
-			&ev.Address, &ev.EventType, &ev.Platform, &ev.ImageURL,
+			&ev.ID, &ev.EventName, &ev.Location, &ev.CityNormalized,
+			&ev.DateTime, &ev.Date, &ev.Time,
+			&ev.Website, &ev.Description, &ev.Address,
+			&ev.EventType, &ev.Platform, &ev.ImageURL,
 			&ev.CreatedAt,
 		)
 		if err != nil {
@@ -1189,6 +1216,95 @@ func (s *Server) insertOrUpdateEventDetail(detail scrapers.ScrapedDetail) (bool,
 	return !exists, err
 }
 
+// ─── Scraper Health ───────────────────────────────────────────────────────────
+
+type ScraperRunRow struct {
+	ID              int64   `json:"id"`
+	ScraperName     string  `json:"scraper_name"`
+	Success         bool    `json:"success"`
+	EventsFound     int     `json:"events_found"`
+	EventsFiltered  int     `json:"events_filtered"`
+	ErrorMessage    string  `json:"error_message"`
+	DurationSeconds float64 `json:"duration_seconds"`
+	RunAt           string  `json:"run_at"`
+}
+
+type ScraperSummary struct {
+	Name        string          `json:"name"`
+	LastRun     string          `json:"last_run"`
+	LastSuccess bool            `json:"last_success"`
+	SuccessRate float64         `json:"success_rate"`
+	TotalRuns   int             `json:"total_runs"`
+	RecentRuns  []ScraperRunRow `json:"recent_runs"`
+}
+
+func (s *Server) handleScraperHealth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonError(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	rows, err := s.db.Query(`
+		SELECT id, scraper_name, success, events_found, events_filtered,
+		       COALESCE(error_message, ''), duration_seconds,
+		       to_char(run_at, 'YYYY-MM-DD HH24:MI:SS') as run_at
+		FROM (
+			SELECT *,
+			       ROW_NUMBER() OVER (PARTITION BY scraper_name ORDER BY run_at DESC) as rn
+			FROM scraper_runs
+		) sub
+		WHERE rn <= 10
+		ORDER BY scraper_name, run_at DESC
+	`)
+	if err != nil {
+		jsonError(w, "Failed to fetch scraper health: "+err.Error(), 500)
+		return
+	}
+	defer rows.Close()
+
+	scraperMap := make(map[string][]ScraperRunRow)
+	var orderedNames []string
+
+	for rows.Next() {
+		var row ScraperRunRow
+		if err := rows.Scan(&row.ID, &row.ScraperName, &row.Success, &row.EventsFound,
+			&row.EventsFiltered, &row.ErrorMessage, &row.DurationSeconds, &row.RunAt); err != nil {
+			continue
+		}
+		if _, exists := scraperMap[row.ScraperName]; !exists {
+			orderedNames = append(orderedNames, row.ScraperName)
+		}
+		scraperMap[row.ScraperName] = append(scraperMap[row.ScraperName], row)
+	}
+
+	var summaries []ScraperSummary
+	for _, name := range orderedNames {
+		runs := scraperMap[name]
+		successCount := 0
+		for _, r := range runs {
+			if r.Success {
+				successCount++
+			}
+		}
+		summary := ScraperSummary{
+			Name:        name,
+			TotalRuns:   len(runs),
+			SuccessRate: float64(successCount) / float64(len(runs)) * 100,
+			RecentRuns:  runs,
+		}
+		if len(runs) > 0 {
+			summary.LastRun = runs[0].RunAt
+			summary.LastSuccess = runs[0].Success
+		}
+		summaries = append(summaries, summary)
+	}
+
+	jsonOK(w, map[string]interface{}{
+		"scrapers":       summaries,
+		"total_scrapers": len(summaries),
+	})
+}
+
 // ─── Routing ──────────────────────────────────────────────────────────────────
 
 func (s *Server) handleEventRoutes(w http.ResponseWriter, r *http.Request) {
@@ -1229,34 +1345,26 @@ func (s *Server) handleEventRoutes(w http.ResponseWriter, r *http.Request) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// ✅ distinctCities now reads from city_normalized column — clean names only
 func (s *Server) distinctCities() []string {
-	rows, err := s.db.Query(
-		"SELECT DISTINCT location FROM events WHERE location IS NOT NULL AND location != '' ORDER BY location",
-	)
+	rows, err := s.db.Query(`
+		SELECT DISTINCT city_normalized
+		FROM events
+		WHERE city_normalized IS NOT NULL
+		  AND city_normalized != ''
+		  AND city_normalized != 'Unknown'
+		ORDER BY city_normalized ASC
+	`)
 	if err != nil {
 		return []string{}
 	}
 	defer rows.Close()
 
-	seen := map[string]bool{}
 	var cities []string
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil || raw == "" {
-			continue
-		}
-		city := extractCity(raw)
-		if city != "" && !seen[city] {
-			seen[city] = true
-			cities = append(cities, city)
-		}
-	}
-
-	for i := 0; i < len(cities); i++ {
-		for j := i + 1; j < len(cities); j++ {
-			if cities[i] > cities[j] {
-				cities[i], cities[j] = cities[j], cities[i]
-			}
+		var c string
+		if err := rows.Scan(&c); err == nil && c != "" {
+			cities = append(cities, c)
 		}
 	}
 	return cities
