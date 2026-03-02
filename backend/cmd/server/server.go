@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	_ "github.com/lib/pq"
+	"github.com/lib/pq"
 	"golang.org/x/crypto/bcrypt"
 
 	"event-scraper/internal/scrapers"
@@ -259,6 +259,20 @@ type Event struct {
 	Platform       string    `json:"platform"`
 	ImageURL       string    `json:"image_url"`
 	CreatedAt      time.Time `json:"created_at"`
+	
+	TitleClean    string   `json:"title_clean,omitempty"`
+	DateClean     string   `json:"date_clean,omitempty"`
+	TimeClean     string   `json:"time_clean,omitempty"`
+	LocationClean string   `json:"location_clean,omitempty"`
+	AddressClean  string   `json:"address_clean,omitempty"`
+	TechStack     []string `json:"tech_stack,omitempty"`
+	Speakers      []string `json:"speakers,omitempty"`
+	Organizer     string   `json:"organizer,omitempty"`
+	Price         string   `json:"price,omitempty"`
+	Confidence    int      `json:"confidence,omitempty"`
+	Summary       string   `json:"summary,omitempty"`
+	Highlights    []string `json:"highlights,omitempty"`
+
 }
 
 type EventDetail struct {
@@ -742,9 +756,34 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cols := eventSelectCols("e", "ed")
 	eventsQuery := fmt.Sprintf(`
-		SELECT %s
+		SELECT 
+			e.id,
+			COALESCE(ec.title_clean, e.event_name) as event_name,
+			e.location,
+			COALESCE(ec.location_clean, e.city_normalized) as city_normalized,
+			e.date_time,
+			COALESCE(ec.date_clean, e.date) as date,
+			COALESCE(ec.time_clean, e.time) as time,
+			e.website,
+			COALESCE(ec.description_clean, e.description) as description,
+			COALESCE(ec.address_clean, e.address) as address,
+			e.event_type,
+			e.platform,
+			COALESCE(ed.image_url, '') as image_url,
+			e.created_at,
+			COALESCE(ec.title_clean, '') as title_clean,
+			COALESCE(ec.date_clean, '') as date_clean,
+			COALESCE(ec.time_clean, '') as time_clean,
+			COALESCE(ec.location_clean, '') as location_clean,
+			COALESCE(ec.address_clean, '') as address_clean,
+			COALESCE(ec.tech_stack, '{}') as tech_stack,
+			COALESCE(ec.speakers, '{}') as speakers,
+			COALESCE(ec.organizer, '') as organizer,
+			COALESCE(ec.price, '') as price,
+			COALESCE(ec.confidence, 0) as confidence,
+			COALESCE(ec.summary, '') as summary,
+			COALESCE(ec.highlights, '{}') as highlights
 		FROM (
 			SELECT inner_e.*,
 				ROW_NUMBER() OVER (
@@ -760,6 +799,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			%s
 		) e
 		LEFT JOIN event_details ed ON e.id = ed.event_id
+		LEFT JOIN event_cleaned ec ON e.id = ec.event_id
 		ORDER BY
 			e.platform_rank ASC,
 			CASE WHEN e.date ~ '^\d{4}-\d{2}-\d{2}$'
@@ -768,7 +808,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			END ASC,
 			e.platform ASC
 		LIMIT $%d OFFSET $%d
-	`, cols, where, idx, idx+1)
+	`, where, idx, idx+1)
 
 	rows, err := s.db.Query(eventsQuery, append(args, limit, offset)...)
 	if err != nil {
@@ -780,16 +820,48 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	events := []Event{}
 	for rows.Next() {
 		var e Event
-		if err := rows.Scan(
-			&e.ID, &e.EventName, &e.Location, &e.CityNormalized,
-			&e.DateTime, &e.Date, &e.Time,
-			&e.Website, &e.Description, &e.Address,
-			&e.EventType, &e.Platform, &e.ImageURL,
+		// Initialize slices for scanning
+		var techStack, speakers, highlights []string
+		
+		err := rows.Scan(
+			&e.ID, 
+			&e.EventName, 
+			&e.Location, 
+			&e.CityNormalized,
+			&e.DateTime, 
+			&e.Date, 
+			&e.Time,
+			&e.Website, 
+			&e.Description, 
+			&e.Address,
+			&e.EventType, 
+			&e.Platform, 
+			&e.ImageURL,
 			&e.CreatedAt,
-		); err != nil {
+			&e.TitleClean, 
+			&e.DateClean, 
+			&e.TimeClean,
+			&e.LocationClean, 
+			&e.AddressClean,
+			pq.Array(&techStack), 
+			pq.Array(&speakers),
+			&e.Organizer, 
+			&e.Price, 
+			&e.Confidence,
+			&e.Summary, 
+			pq.Array(&highlights),
+		)
+		
+		if err != nil {
 			log.Printf("Row scan error: %v", err)
 			continue
 		}
+		
+		// Assign arrays
+		e.TechStack = techStack
+		e.Speakers = speakers
+		e.Highlights = highlights
+		
 		events = append(events, e)
 	}
 
@@ -842,17 +914,49 @@ func (s *Server) handleEventDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var e Event
-	err = s.db.QueryRow(fmt.Sprintf(`
-		SELECT %s
+	err = s.db.QueryRow(`
+		SELECT 
+			e.id,
+			COALESCE(ec.title_clean, e.event_name) as event_name,
+			e.location,
+			COALESCE(ec.location_clean, e.city_normalized) as city_normalized,
+			e.date_time,
+			COALESCE(ec.date_clean, e.date) as date,
+			COALESCE(ec.time_clean, e.time) as time,
+			e.website,
+			COALESCE(ec.description_clean, e.description) as description,
+			COALESCE(ec.address_clean, e.address) as address,
+			e.event_type,
+			e.platform,
+			COALESCE(ed.image_url, '') as image_url,
+			e.created_at,
+			COALESCE(ec.title_clean, '') as title_clean,
+			COALESCE(ec.date_clean, '') as date_clean,
+			COALESCE(ec.time_clean, '') as time_clean,
+			COALESCE(ec.location_clean, '') as location_clean,
+			COALESCE(ec.address_clean, '') as address_clean,
+			COALESCE(ec.tech_stack, '{}') as tech_stack,
+			COALESCE(ec.speakers, '{}') as speakers,
+			COALESCE(ec.organizer, '') as organizer,
+			COALESCE(ec.price, '') as price,
+			COALESCE(ec.confidence, 0) as confidence,
+			COALESCE(ec.summary, '') as summary,
+			COALESCE(ec.highlights, '{}') as highlights
 		FROM events e
 		LEFT JOIN event_details ed ON e.id = ed.event_id
+		LEFT JOIN event_cleaned ec ON e.id = ec.event_id
 		WHERE e.id = $1
-	`, eventSelectCols("e", "ed")), eventID).Scan(
+	`, eventID).Scan(
 		&e.ID, &e.EventName, &e.Location, &e.CityNormalized,
 		&e.DateTime, &e.Date, &e.Time,
 		&e.Website, &e.Description, &e.Address,
 		&e.EventType, &e.Platform, &e.ImageURL,
 		&e.CreatedAt,
+		&e.TitleClean, &e.DateClean, &e.TimeClean,
+		&e.LocationClean, &e.AddressClean,
+		pq.Array(&e.TechStack), pq.Array(&e.Speakers),
+		&e.Organizer, &e.Price, &e.Confidence,
+		&e.Summary, pq.Array(&e.Highlights),
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		jsonError(w, "Event not found", 404)

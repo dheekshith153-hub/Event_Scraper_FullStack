@@ -104,6 +104,31 @@ func (db *DB) Migrate() error {
 			run_at TIMESTAMP NOT NULL DEFAULT NOW()
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS event_cleaned (
+			event_id INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+			title_clean TEXT,
+			description_clean TEXT,
+			date_clean TEXT,
+			time_clean TEXT,
+			location_clean TEXT,
+			address_clean TEXT,
+			tech_stack TEXT[],
+			speakers TEXT[],
+			organizer TEXT,
+			price TEXT,
+			confidence INTEGER,
+			missing_data TEXT[],
+			summary TEXT,
+			highlights TEXT[],
+			cleaned_at TIMESTAMP DEFAULT NOW(),
+			claude_model TEXT
+		)`,
+
+		`CREATE INDEX IF NOT EXISTS idx_event_cleaned_event_id ON event_cleaned(event_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_event_cleaned_date ON event_cleaned(date_clean)`,
+		`CREATE INDEX IF NOT EXISTS idx_event_cleaned_location ON event_cleaned(location_clean)`,
+		`CREATE INDEX IF NOT EXISTS idx_event_cleaned_tech ON event_cleaned USING GIN(tech_stack)`,
+
 		// Add city_normalized to existing tables (safe — IF NOT EXISTS)
 		`ALTER TABLE events ADD COLUMN IF NOT EXISTS city_normalized TEXT DEFAULT 'Unknown'`,
 

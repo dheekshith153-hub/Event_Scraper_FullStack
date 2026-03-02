@@ -42,8 +42,8 @@ func main() {
 	fmt.Println(strings.Repeat("=", 80))
 	fmt.Println("🚀 EVENT DETAIL SCRAPER — Standalone Process")
 	fmt.Println("   Runs every 30 minutes")
+	fmt.Println("   Uses Ollama gemma2:2b for detail extraction")
 	fmt.Println("   Saves each event to DB immediately after scraping")
-	fmt.Println("   Fully independent of the event listing scraper")
 	fmt.Println(strings.Repeat("=", 80))
 
 	detailScraper := scrapers.NewDetailScraper(sqlDB, 30*time.Second, 3)

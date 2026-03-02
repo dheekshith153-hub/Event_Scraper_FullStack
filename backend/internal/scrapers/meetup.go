@@ -210,6 +210,10 @@ func extractMeetupEventsFromApollo(apollo map[string]interface{}, city string) [
 			continue
 		}
 
+		if !isTechRelevant(title) {
+			continue
+		}
+
 		eventURL := ""
 		if s, _ := m["eventUrl"].(string); s != "" {
 			eventURL = s
@@ -302,6 +306,10 @@ func meetupEventFromMap(eventData map[string]interface{}, city string) (models.E
 	}
 	title = cleanSpaceMeetup(title)
 	if title == "" {
+		return models.Event{}, false
+	}
+
+	if !isTechRelevant(title) {
 		return models.Event{}, false
 	}
 

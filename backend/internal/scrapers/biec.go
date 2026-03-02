@@ -3,6 +3,7 @@ package scrapers
 import (
 	"context"
 	"event-scraper/internal/models"
+	"event-scraper/pkg/utils"
 	"fmt"
 	"regexp"
 	"strings"
@@ -40,7 +41,8 @@ var yearAnyRe = regexp.MustCompile(`\b(20\d{2})\b`)
 
 type BIECScraper struct {
 	*BaseScraper
-	url string
+	url        string
+	classifier *utils.OllamaClassifier
 }
 
 var techAllow = []string{
@@ -107,6 +109,7 @@ func NewBIECScraper(timeout time.Duration, retries int) *BIECScraper {
 	return &BIECScraper{
 		BaseScraper: NewBaseScraper(timeout, retries),
 		url:         "https://www.biec.in/events",
+		classifier:  utils.NewOllamaClassifier(),
 	}
 }
 
@@ -208,8 +211,38 @@ func (s *BIECScraper) Scrape(ctx context.Context) ([]models.Event, error) {
 
 		// Optional: tech relevance filter (keep your current behavior)
 		if !isTechEvent(title, website) {
-			fmt.Printf("BIEC: Skipping non-tech event: %q\n", title)
-			return
+			// Check if it was a hard blocklist hit — LLM must NOT override these
+			titleLower := strings.ToLower(cleanSpace(title))
+			isHardBlocked := false
+			for _, bad := range nonTechBlock {
+				if strings.Contains(titleLower, bad) {
+					isHardBlocked = true
+					break
+				}
+			}
+
+			if isHardBlocked {
+				fmt.Printf("BIEC: Hard-blocked (blocklist): %q\n", title)
+				return
+			}
+
+			// LLM second-chance ONLY for uncertain cases (passed blocklist but no tech signal)
+			if s.classifier != nil {
+				isTech, reason, err := s.classifier.ClassifyTechEvent(title, "")
+				if err != nil {
+					fmt.Printf("   ⚠️  WARNING: Ollama classify failed for %q: %v\n", title, err)
+					fmt.Printf("BIEC: Skipping non-tech event: %q\n", title)
+					return
+				}
+				if !isTech {
+					fmt.Printf("   🤖 Ollama confirmed NON-TECH: %q (%s)\n", title, reason)
+					return
+				}
+				fmt.Printf("   🤖 Ollama RESCUED as TECH: %q (%s)\n", title, reason)
+			} else {
+				fmt.Printf("BIEC: Skipping non-tech event: %q\n", title)
+				return
+			}
 		}
 
 		events = append(events, models.Event{

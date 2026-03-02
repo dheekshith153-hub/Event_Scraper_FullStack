@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"event-scraper/internal/ai"
 	"event-scraper/internal/database"
 	"event-scraper/internal/models"
 	"event-scraper/internal/scrapers"
@@ -15,9 +16,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lib/pq"
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
 )
+
+// BatchCleaner interface for LLM event cleaning (Ollama only)
+type BatchCleaner interface {
+	CleanEventBatch(ctx context.Context, events []models.Event, details []*models.EventDetail) ([]ai.CleanedEvent, error)
+}
 
 type Scheduler struct {
 	db              *database.DB
@@ -29,6 +36,9 @@ type Scheduler struct {
 	mu              sync.Mutex
 	stopChan        chan struct{}
 	intervalMinutes int
+
+	cleaner     BatchCleaner
+	llmProvider string
 }
 
 type ScraperStatus struct {
@@ -48,6 +58,15 @@ func New(
 	retries int,
 ) *Scheduler {
 
+	// Ollama is the sole LLM provider
+	provider := "ollama"
+	cleaner := BatchCleaner(ai.NewOllamaCleanerFromEnv())
+	logger.Info("Ollama cleaner initialized",
+		zap.String("provider", provider),
+		zap.String("ollama_url", getEnv("OLLAMA_URL", "http://localhost:11434")),
+		zap.String("ollama_model", getEnv("OLLAMA_MODEL", "gemma2:2b")),
+	)
+
 	allScrapers := []scrapers.Scraper{
 		scrapers.NewAllEventsScraper(timeout, retries),
 		scrapers.NewBIECScraper(timeout, retries),
@@ -65,6 +84,8 @@ func New(
 		logger:          logger,
 		stopChan:        make(chan struct{}),
 		intervalMinutes: intervalMinutes,
+		cleaner:         cleaner,
+		llmProvider:     provider,
 	}
 }
 
@@ -74,6 +95,7 @@ func (s *Scheduler) Start() error {
 		zap.Int("scraper_count", len(s.scrapers)),
 		zap.String("filter", "upcoming + offline only"),
 		zap.String("note", "Run cmd/detailscraper separately for event details"),
+		zap.String("llm_provider", s.llmProvider),
 	)
 
 	go s.runScrapingCycle()
@@ -120,6 +142,7 @@ func (s *Scheduler) runScrapingCycle() {
 	fmt.Printf("SCRAPING CYCLE #%d STARTED at %s\n", loop, start.Format("2006-01-02 15:04:05"))
 	fmt.Printf("%s\n", strings.Repeat("=", 80))
 
+	// 1) Run all Go scrapers
 	for _, scraper := range s.scrapers {
 		select {
 		case <-s.stopChan:
@@ -136,13 +159,21 @@ func (s *Scheduler) runScrapingCycle() {
 		}
 	}
 
-	// HITEX Python scraper
+	// 2) Run HITEX Python scraper
 	hitexStatus := s.runHitexPython()
 	statuses = append(statuses, hitexStatus)
 	if hitexStatus.Success {
 		totalInserted += hitexStatus.EventsFound
 	}
 
+	// 3) Clean events with selected LLM
+	if s.cleaner != nil {
+		s.cleanNewEvents()
+	} else {
+		fmt.Printf("\n⚠️  LLM cleaning skipped (LLM_PROVIDER=%s)\n", s.llmProvider)
+	}
+
+	// 4) Log results
 	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
 	fmt.Printf("CYCLE #%d COMPLETED\n", loop)
 	fmt.Printf("   Duration  : %v\n", time.Since(start).Round(time.Second))
@@ -164,7 +195,6 @@ func (s *Scheduler) runScrapingCycle() {
 		}
 		fmt.Println()
 
-		// Record scraper health to DB
 		if err := s.db.RecordScraperRun(
 			st.Name, st.Success, st.EventsFound, st.Filtered,
 			st.Error, st.Duration.Seconds(),
@@ -175,29 +205,153 @@ func (s *Scheduler) runScrapingCycle() {
 	fmt.Printf("%s\n\n", strings.Repeat("=", 80))
 }
 
-// hitexScriptPath returns the absolute path to internal/scrapers/hitex.py.
-// Always resolves from CWD (which is backend/ when running "go run cmd/scraper/main.go").
+func (s *Scheduler) cleanNewEvents() {
+	s.logger.Info("Starting event cleaning phase", zap.String("llm_provider", s.llmProvider))
+
+	rows, err := s.db.GetConn().Query(`
+		SELECT 
+			e.id, 
+			e.event_name, 
+			COALESCE(e.date, '') as date,
+			COALESCE(e.time, '') as time,
+			COALESCE(e.location, '') as location,
+			COALESCE(e.address, '') as address,
+			COALESCE(e.description, '') as description,
+			COALESCE(e.platform, '') as platform,
+			COALESCE(e.website, '') as website,
+			COALESCE(ed.full_description, '') as full_description
+		FROM events e
+		LEFT JOIN event_details ed ON e.id = ed.event_id
+		LEFT JOIN event_cleaned ec ON e.id = ec.event_id
+		WHERE ec.event_id IS NULL 
+		   OR ec.cleaned_at < NOW() - INTERVAL '7 days'
+		ORDER BY e.created_at DESC
+		LIMIT 5
+	`)
+	if err != nil {
+		s.logger.Error("Failed to fetch events for cleaning", zap.Error(err))
+		return
+	}
+	defer rows.Close()
+
+	var events []models.Event
+	var details []*models.EventDetail
+	var eventIDs []int64
+
+	for rows.Next() {
+		var e models.Event
+		var fullDesc string
+
+		err := rows.Scan(
+			&e.ID, &e.EventName, &e.Date, &e.Time, &e.Location, &e.Address,
+			&e.Description, &e.Platform, &e.Website,
+			&fullDesc,
+		)
+		if err != nil {
+			s.logger.Error("Error scanning event", zap.Error(err))
+			continue
+		}
+
+		events = append(events, e)
+		eventIDs = append(eventIDs, e.ID)
+
+		detail := &models.EventDetail{
+			EventID:         e.ID,
+			FullDescription: fullDesc,
+		}
+		details = append(details, detail)
+	}
+
+	if len(events) == 0 {
+		s.logger.Info("No events need cleaning")
+		return
+	}
+
+	s.logger.Info("Cleaning events",
+		zap.Int("count", len(events)),
+		zap.String("llm_provider", s.llmProvider),
+	)
+
+	cleaned, err := s.cleaner.CleanEventBatch(context.Background(), events, details)
+	if err != nil {
+		s.logger.Error("Batch cleaning failed", zap.Error(err), zap.String("llm_provider", s.llmProvider))
+		return
+	}
+
+	savedCount := 0
+	for i, clean := range cleaned {
+		if i >= len(eventIDs) {
+			break
+		}
+
+		_, err := s.db.GetConn().Exec(`
+			INSERT INTO event_cleaned (
+				event_id, title_clean, description_clean, date_clean, time_clean,
+				location_clean, address_clean, tech_stack, speakers, organizer,
+				price, confidence, missing_data, summary, highlights, cleaned_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW())
+			ON CONFLICT (event_id) DO UPDATE SET
+				title_clean = EXCLUDED.title_clean,
+				description_clean = EXCLUDED.description_clean,
+				date_clean = EXCLUDED.date_clean,
+				time_clean = EXCLUDED.time_clean,
+				location_clean = EXCLUDED.location_clean,
+				address_clean = EXCLUDED.address_clean,
+				tech_stack = EXCLUDED.tech_stack,
+				speakers = EXCLUDED.speakers,
+				organizer = EXCLUDED.organizer,
+				price = EXCLUDED.price,
+				confidence = EXCLUDED.confidence,
+				missing_data = EXCLUDED.missing_data,
+				summary = EXCLUDED.summary,
+				highlights = EXCLUDED.highlights,
+				cleaned_at = NOW()
+		`,
+			eventIDs[i],
+			clean.Title,
+			clean.Description,
+			clean.Date,
+			clean.Time,
+			clean.Location,
+			clean.Address,
+			pq.Array(clean.TechStack),
+			pq.Array(clean.Speakers),
+			clean.Organizer,
+			clean.Price,
+			clean.Confidence,
+			pq.Array(clean.MissingData),
+			clean.Summary,
+			pq.Array(clean.Highlights),
+		)
+
+		if err != nil {
+			s.logger.Error("Failed to save cleaned event",
+				zap.Int64("event_id", eventIDs[i]),
+				zap.Error(err))
+		} else {
+			savedCount++
+		}
+	}
+
+	fmt.Printf("\n✅ LLM cleaning complete (%s): %d events cleaned\n", s.llmProvider, savedCount)
+}
+
 func hitexScriptPath() string {
-	// Strategy 1: CWD — reliable when "go run" is executed from backend/
 	if cwd, err := os.Getwd(); err == nil {
 		return filepath.Join(cwd, "internal", "scrapers", "hitex.py")
 	}
 
-	// Strategy 2: relative to this source file
-	// scheduler.go = backend/internal/scheduler/scheduler.go
-	// hitex.py     = backend/internal/scrapers/hitex.py
 	_, filename, _, ok := runtime.Caller(0)
 	if ok {
 		schedulerDir := filepath.Dir(filename)
-		internalDir  := filepath.Dir(schedulerDir)
-		abs, _        := filepath.Abs(filepath.Join(internalDir, "scrapers", "hitex.py"))
+		internalDir := filepath.Dir(schedulerDir)
+		abs, _ := filepath.Abs(filepath.Join(internalDir, "scrapers", "hitex.py"))
 		return abs
 	}
 
 	return filepath.Join("internal", "scrapers", "hitex.py")
 }
 
-// pythonExecutable returns "python" on Windows, "python3" on Unix/Mac.
 func pythonExecutable() string {
 	if runtime.GOOS == "windows" {
 		return "python"
@@ -205,8 +359,6 @@ func pythonExecutable() string {
 	return "python3"
 }
 
-// runHitexPython runs internal/scrapers/hitex.py as a subprocess.
-// Sets PYTHONIOENCODING=utf-8 so Windows cp1252 doesn't cause UnicodeEncodeError.
 func (s *Scheduler) runHitexPython() ScraperStatus {
 	scriptPath := hitexScriptPath()
 	fmt.Printf("  [HITEX Python] %s\n", scriptPath)
@@ -223,9 +375,6 @@ func (s *Scheduler) runHitexPython() ScraperStatus {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, pythonExecutable(), scriptPath)
-
-	// ── Critical for Windows: force UTF-8 output encoding ────────────────────
-	// Without this, Python on Windows uses cp1252 and crashes on any unicode char.
 	cmd.Env = append(os.Environ(),
 		"PYTHONIOENCODING=utf-8",
 		"PYTHONUTF8=1",
@@ -249,7 +398,6 @@ func (s *Scheduler) runHitexPython() ScraperStatus {
 		return ScraperStatus{Name: "hitex (python)", Error: err.Error(), Duration: time.Since(runStart)}
 	}
 
-	// Parse "Inserted: N" from Python output
 	inserted := 0
 	for _, line := range strings.Split(outputStr, "\n") {
 		var n int
@@ -265,6 +413,7 @@ func (s *Scheduler) runHitexPython() ScraperStatus {
 func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 	name := scraper.Name()
 	runStart := time.Now()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
@@ -276,6 +425,7 @@ func (s *Scheduler) runScraper(scraper scrapers.Scraper) ScraperStatus {
 
 	filtered := 0
 	var cleanEvents []models.Event
+
 	for _, event := range events {
 		if !utils.IsOfflineEvent(event.EventType, event.Location, event.EventName) {
 			filtered++
@@ -317,4 +467,11 @@ func (s *Scheduler) GetLoopCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loopCount
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

@@ -86,13 +86,16 @@ var nonTechKeywords = []string{
 	"meditation", "spiritual", "prayer", "puja", "bhajan", "kirtan",
 	"cricket", "football", "marathon", "cyclothon", "swimming",
 	"real estate property", "astrology", "tarot", "numerology",
-	"kids crafts", "parenting workshop", "course", "demo", "workshop", "seminar", "business",
+	"kids crafts", "parenting workshop", "course", "demo", "workshop", 
+	"seminar", "business","bakery", "chocolate", "jewellery", "perfume", "furniture", 
+	"dairy", "poultry",
 }
 
 type AllEventsScraper struct {
 	*BaseScraper
-	cities  []string
-	uaIndex int
+	cities     []string
+	uaIndex    int
+	classifier *utils.OllamaClassifier
 }
 
 func NewAllEventsScraper(timeout time.Duration, retries int) *AllEventsScraper {
@@ -102,6 +105,7 @@ func NewAllEventsScraper(timeout time.Duration, retries int) *AllEventsScraper {
 			"bangalore", "mumbai", "delhi", "hyderabad", "chennai",
 			"pune-in", "kolkata", "ahmedabad",
 		},
+		classifier: utils.NewOllamaClassifier(),
 	}
 }
 
@@ -201,7 +205,7 @@ func (s *AllEventsScraper) scrapeCityCategoryWithViewMore(ctx context.Context, c
 		}
 	}
 
-	collected = filterAndNormalize(collected, city)
+	collected = s.filterAndNormalize(collected, city)
 	return dedupeByWebsite(collected), nil
 }
 
@@ -424,7 +428,7 @@ func parseAllEventsEventCards(doc *goquery.Document, city string) []models.Event
 	return events
 }
 
-func filterAndNormalize(in []models.Event, fallbackCity string) []models.Event {
+func (s *AllEventsScraper) filterAndNormalize(in []models.Event, fallbackCity string) []models.Event {
 	out := make([]models.Event, 0, len(in))
 	for _, e := range in {
 		name := strings.TrimSpace(e.EventName)
@@ -440,7 +444,21 @@ func filterAndNormalize(in []models.Event, fallbackCity string) []models.Event {
 			continue
 		}
 		if !isTechRelevant(name) {
-			continue
+			// LLM second-chance: ask Ollama before rejecting
+			if s.classifier != nil {
+				isTech, reason, err := s.classifier.ClassifyTechEvent(name, e.Description)
+				if err != nil {
+					fmt.Printf("   ⚠️  WARNING: Ollama classify failed for %q: %v\n", name, err)
+					continue // keywords said no, LLM unavailable → skip
+				}
+				if !isTech {
+					fmt.Printf("   🤖 Ollama confirmed NON-TECH: %q (%s)\n", name, reason)
+					continue
+				}
+				fmt.Printf("   🤖 Ollama RESCUED as TECH: %q (%s)\n", name, reason)
+			} else {
+				continue
+			}
 		}
 		if !isAllEventsUpcoming(e.DateTime) {
 			continue

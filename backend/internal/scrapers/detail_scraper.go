@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"event-scraper/internal/ai"
 	"fmt"
 	html_pkg "html"
 	"io"
@@ -26,7 +27,8 @@ const (
 
 type DetailScraper struct {
 	*BaseScraper
-	db *sql.DB
+	db        *sql.DB
+	describer *ai.OllamaDescriber
 }
 
 type EventFromDB struct {
@@ -60,6 +62,7 @@ func NewDetailScraper(db *sql.DB, timeout time.Duration, retries int) *DetailScr
 	return &DetailScraper{
 		BaseScraper: NewBaseScraper(timeout, retries),
 		db:          db,
+		describer:   ai.NewOllamaDescriberFromEnv(),
 	}
 }
 
@@ -200,6 +203,7 @@ func (s *DetailScraper) scrapeEventDetailPage(ctx context.Context, event EventFr
 
 	fmt.Printf("   📄 %d bytes\n", len(bodyHTML))
 
+	// 1) Rule-based parsing first (fast, deterministic)
 	var detail *ScrapedDetail
 	switch platform {
 	case "allevents":
@@ -220,22 +224,46 @@ func (s *DetailScraper) scrapeEventDetailPage(ctx context.Context, event EventFr
 		detail = s.parseGenericDetail(doc, event)
 	}
 
-	// ── Post-processing: clean to plain text and summarize ──
-	if detail.FullDescription != "" {
+	// 2) Lightweight LLM Enhancement: generate description from title only
+	// Triggers when: description is too short OR noisy/unstructured
+	// Instead of sending 56KB HTML to LLM, we only send the event title (~100 chars)
+	descText := strings.TrimSpace(detail.FullDescription)
+	needsLLM := len(descText) < 80 || isNoisyDescription(descText)
+
+	if s.describer != nil && needsLLM {
+		if isNoisyDescription(descText) {
+			fmt.Printf("   🧹 Noisy description detected (%d chars), generating clean one from title...\n", len(descText))
+		} else {
+			fmt.Printf("   🦙 Short description (%d chars), generating from title...\n", len(descText))
+		}
+		desc, descErr := s.describer.GenerateDescriptionFromTitle(ctx, event.Name, event.Platform)
+		if descErr != nil {
+			fmt.Printf("   ⚠️  LLM description failed: %v (keeping rule-based)\n", descErr)
+			// Still clean up the existing description
+			if len(descText) > 30 {
+				plainText := cleanToPlainText(detail.FullDescription)
+				detail.FullDescription = summarizeToOneParagraph(plainText, 500)
+			}
+		} else if len(desc) > 50 {
+			detail.FullDescription = desc
+			fmt.Printf("   ✅ LLM: Generated %d char clean description\n", len(desc))
+		}
+	} else if len(descText) > 30 {
+		// Non-noisy but still clean up HTML artifacts
 		plainText := cleanToPlainText(detail.FullDescription)
 		detail.FullDescription = summarizeToOneParagraph(plainText, 500)
 	}
 
-	// ── Google Search fallback when all selectors fail ──
+	// 4) Google Search fallback when all methods fail
 	if len(strings.TrimSpace(detail.FullDescription)) < 30 {
-		fmt.Printf("   ⚠️  Description too short (%d chars), trying Google fallback\n", len(detail.FullDescription))
+		fmt.Printf("   ⚠️  WARNING: Description too short (%d chars), trying Google fallback\n", len(detail.FullDescription))
 		googleDesc := s.searchEventOnGoogle(ctx, event.Name, event.Platform)
 		if googleDesc != "" {
 			detail.FullDescription = summarizeToOneParagraph(googleDesc, 500)
 		}
 	}
 
-	// ── Final fallback: use og:description or meta description ──
+	// 5) Final fallback: use og:description or meta description
 	if len(strings.TrimSpace(detail.FullDescription)) < 30 {
 		if desc, exists := doc.Find("meta[property='og:description']").First().Attr("content"); exists && len(desc) > 30 {
 			detail.FullDescription = summarizeToOneParagraph(cleanToPlainText(desc), 500)
@@ -246,13 +274,16 @@ func (s *DetailScraper) scrapeEventDetailPage(ctx context.Context, event EventFr
 		}
 	}
 
+	if len(strings.TrimSpace(detail.FullDescription)) < 30 {
+		fmt.Printf("   ⚠️  WARNING: Could not extract meaningful description for event_id=%d (%s)\n", event.ID, event.Name)
+	}
+
 	detail.ScrapedBody = truncateString(bodyHTML, 50000)
 	fmt.Printf("   ✨ desc=%d chars organizer=%s\n", len(detail.FullDescription), detail.Organizer)
 	return detail, nil
 }
 
 // fetchWithChrome uses headless Chromium to fully render JavaScript pages.
-// Handles both eChai (Cloudflare bypass) and Townscript (Angular SSR + Read More click).
 func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string, platform string) (string, error) {
 	fmt.Printf("   🌐 Chrome: Launching headless browser for %s\n", targetURL)
 
@@ -281,13 +312,10 @@ func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string, p
 	var htmlContent string
 
 	if platform == "townscript" {
-		// Townscript is Angular — content renders client-side into #event-info-content.
-		// We also need to click "Read More" to expand the full description.
 		err := chromedp.Run(timeoutCtx,
 			chromedp.Navigate(targetURL),
 			chromedp.WaitVisible(`#event-info-content`, chromedp.ByQuery),
 			chromedp.Sleep(1*time.Second),
-			// Click "Read More" button if present to reveal full description
 			chromedp.Evaluate(`
 				(function() {
 					var btns = document.querySelectorAll('button');
@@ -308,7 +336,6 @@ func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string, p
 			fallbackErr := chromedp.Run(timeoutCtx,
 				chromedp.Navigate(targetURL),
 				chromedp.Sleep(4*time.Second),
-				// Still try clicking Read More even in fallback
 				chromedp.Evaluate(`
 					(function() {
 						var btns = document.querySelectorAll('button');
@@ -329,7 +356,6 @@ func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string, p
 			}
 		}
 	} else {
-		// eChai path — bypasses Cloudflare, waits for trix-content
 		err := chromedp.Run(timeoutCtx,
 			chromedp.Navigate(targetURL),
 			chromedp.WaitVisible(`.event_short_description`, chromedp.ByQuery),
@@ -353,7 +379,6 @@ func (s *DetailScraper) fetchWithChrome(ctx context.Context, targetURL string, p
 	return htmlContent, nil
 }
 
-// fetchURL is the standard HTTP fetcher for non-JS-heavy platforms
 func (s *DetailScraper) fetchURL(ctx context.Context, targetURL string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
 	if err != nil {
@@ -968,4 +993,73 @@ func extractNumber(s string) int {
 		return n
 	}
 	return 0
+}
+
+// isNoisyDescription returns true if the text looks like raw DOM/unstructured
+// data rather than a clean human-readable description.
+func isNoisyDescription(text string) bool {
+	if len(text) < 20 {
+		return true
+	}
+
+	// Count special characters (excluding normal punctuation)
+	specialCount := 0
+	for _, r := range text {
+		switch {
+		case r == '@' || r == '#' || r == '{' || r == '}' || r == '<' || r == '>' ||
+			r == '|' || r == '\\' || r == '~' || r == '^' || r == '`':
+			specialCount++
+		}
+	}
+	// More than 3% special chars = noisy
+	if float64(specialCount)/float64(len(text)) > 0.03 {
+		return true
+	}
+
+	lower := strings.ToLower(text)
+
+	// Contains raw HTML/CSS/JS fragments
+	htmlPatterns := []string{"<div", "<span", "<script", "class=", "style=", "onclick",
+		"display:", "margin:", "padding:", "font-size:", "background:", "rgba("}
+	for _, p := range htmlPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+
+	// Looks like navigation/menu text (many very short "sentences")
+	words := strings.Fields(text)
+	if len(words) > 0 {
+		avgWordLen := len(text) / len(words)
+		if avgWordLen < 3 && len(words) > 10 {
+			return true // lots of tiny fragments = nav text
+		}
+	}
+
+	// Too many lines relative to length (sign of raw DOM)
+	lines := strings.Count(text, "\n")
+	if lines > 0 && len(text)/lines < 15 {
+		return true // very short lines = likely list/nav items
+	}
+
+	// Contains common boilerplate patterns that indicate raw DOM
+	boilerplate := []string{"cookie", "accept all", "privacy policy", "terms of service",
+		"sign in", "log in", "subscribe", "newsletter", "copyright ©",
+		"all rights reserved", "powered by", "follow us", "share this"}
+	boilerplateCount := 0
+	for _, bp := range boilerplate {
+		if strings.Contains(lower, bp) {
+			boilerplateCount++
+		}
+	}
+	if boilerplateCount >= 2 {
+		return true
+	}
+
+	// Description is just "Organized by: X" with nothing else meaningful
+	if strings.HasPrefix(text, "Organized by:") && len(text) < 100 {
+		return true
+	}
+
+	return false
 }
