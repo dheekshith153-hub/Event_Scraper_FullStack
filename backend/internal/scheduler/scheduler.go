@@ -67,14 +67,9 @@ func New(
 		zap.String("ollama_model", getEnv("OLLAMA_MODEL", "gemma2:2b")),
 	)
 
+	// All scrapers are now Python-based. We run them as a single subprocess.
 	allScrapers := []scrapers.Scraper{
-		scrapers.NewAllEventsScraper(timeout, retries),
-		scrapers.NewBIECScraper(timeout, retries),
-		scrapers.NewHasGeekScraper(timeout, retries),
-		scrapers.NewTownscriptScraper(timeout, retries),
-		scrapers.NewMeetupScraper(timeout, retries),
-		scrapers.NewEChaiScraper(timeout, retries),
-		// HITEX is scraped by internal/scrapers/hitex.py — see runHitexPython()
+		scrapers.NewPythonScraper(timeout),
 	}
 
 	return &Scheduler{
@@ -94,7 +89,7 @@ func (s *Scheduler) Start() error {
 		zap.Int("interval_minutes", s.intervalMinutes),
 		zap.Int("scraper_count", len(s.scrapers)),
 		zap.String("filter", "upcoming + offline only"),
-		zap.String("note", "Run cmd/detailscraper separately for event details"),
+		zap.String("note", "Detail scraper runs automatically after each cycle"),
 		zap.String("llm_provider", s.llmProvider),
 	)
 
@@ -142,7 +137,7 @@ func (s *Scheduler) runScrapingCycle() {
 	fmt.Printf("SCRAPING CYCLE #%d STARTED at %s\n", loop, start.Format("2006-01-02 15:04:05"))
 	fmt.Printf("%s\n", strings.Repeat("=", 80))
 
-	// 1) Run all Go scrapers
+	// ── Step 1: Run Python scrapers (main_scraper.py handles all scrapers) ──
 	for _, scraper := range s.scrapers {
 		select {
 		case <-s.stopChan:
@@ -159,26 +154,42 @@ func (s *Scheduler) runScrapingCycle() {
 		}
 	}
 
-	// 2) Run HITEX Python scraper
+	// ── Step 2: Run HITEX Python scraper ────────────────────────────────────
 	hitexStatus := s.runHitexPython()
 	statuses = append(statuses, hitexStatus)
 	if hitexStatus.Success {
 		totalInserted += hitexStatus.EventsFound
 	}
 
-	// 3) Clean events with selected LLM
+	// ── Step 3: Delete non-tech events ──────────────────────────────────────
+	fmt.Printf("\n%s\n", strings.Repeat("-", 80))
+	fmt.Println("🗑️  STEP 3: Deleting non-tech events...")
+	deleted := s.deleteNonTechEvents()
+	fmt.Printf("   Removed %d non-tech events from database\n", deleted)
+
+	// ── Step 4: Run detail scraper ───────────────────────────────────────────
+	fmt.Printf("\n%s\n", strings.Repeat("-", 80))
+	fmt.Println("🔍 STEP 4: Running detail scraper...")
+	s.runDetailScraperPython()
+
+	// ── Step 5: Clean events with selected LLM ──────────────────────────────
 	if s.cleaner != nil {
 		s.cleanNewEvents()
 	} else {
 		fmt.Printf("\n⚠️  LLM cleaning skipped (LLM_PROVIDER=%s)\n", s.llmProvider)
 	}
 
-	// 4) Log results
+	// ── Step 6: Log results + total DB count ─────────────────────────────────
+	totalInDB := s.getTotalEventCount()
+
 	fmt.Printf("\n%s\n", strings.Repeat("=", 80))
 	fmt.Printf("CYCLE #%d COMPLETED\n", loop)
 	fmt.Printf("   Duration  : %v\n", time.Since(start).Round(time.Second))
 	fmt.Printf("   Inserted  : %d events\n", totalInserted)
 	fmt.Printf("   Filtered  : %d events\n", totalFiltered)
+	fmt.Printf("   Deleted   : %d non-tech events\n", deleted)
+	fmt.Printf("   Total DB  : %d events in database\n", totalInDB)
+	fmt.Printf("   Next run  : in %d minutes\n", s.intervalMinutes)
 	fmt.Printf("%s\n", strings.Repeat("-", 80))
 
 	for _, st := range statuses {
@@ -204,6 +215,152 @@ func (s *Scheduler) runScrapingCycle() {
 	}
 	fmt.Printf("%s\n\n", strings.Repeat("=", 80))
 }
+
+// ─── deleteNonTechEvents ────────────────────────────────────────────────────
+// Removes events whose names don't contain any recognised tech keywords.
+// Runs after every scraping cycle, before detail scraping begins.
+func (s *Scheduler) deleteNonTechEvents() int {
+	result, err := s.db.GetConn().Exec(`
+		DELETE FROM events
+		WHERE NOT (
+			event_name ~* '\y(
+				tech|software|developer|development|programming|coding|coder|
+				AI|artificial intelligence|machine learning|deep learning|ML|LLM|GPT|NLP|
+				data science|data engineering|data analytics|data|
+				cloud|devops|devsecops|kubernetes|k8s|docker|container|
+				python|java|javascript|typescript|golang|go lang|rust|scala|
+				react|angular|vue|node\.?js|next\.?js|
+				backend|frontend|front.end|back.end|full.?stack|
+				API|REST|GraphQL|microservice|
+				startup|hackathon|workshop|bootcamp|
+				conference|summit|meetup|tech talk|
+				digital|cyber|security|blockchain|web3|crypto|
+				web dev|web development|app dev|mobile dev|
+				IoT|robotics|embedded|hardware|
+				open source|github|linux|unix|
+				database|SQL|NoSQL|postgres|mongo|redis|
+				AWS|GCP|Azure|cloud native|serverless|
+				SaaS|PaaS|IaaS|
+				engineering|computer science|
+				flutter|swift|kotlin|android|ios|
+				hadoop|spark|kafka|airflow|
+				tensorflow|pytorch|hugging face|
+				UI|UX|product design|figma|
+				cybersecurity|infosec|penetration testing|
+				agile|scrum|product management|
+				AR|VR|metaverse|
+				semiconductor|chip|VLSI|FPGA
+			)\y'
+		)
+	`)
+	if err != nil {
+		s.logger.Error("Failed to delete non-tech events", zap.Error(err))
+		return 0
+	}
+
+	count, _ := result.RowsAffected()
+	return int(count)
+}
+
+// ─── runDetailScraperPython ─────────────────────────────────────────────────
+// Spawns main_detailscraper.py as a subprocess after each scraping cycle.
+func (s *Scheduler) runDetailScraperPython() {
+	scriptPath := detailScraperScriptPath()
+	fmt.Printf("  [Detail Scraper] %s\n", scriptPath)
+
+	if _, err := os.Stat(scriptPath); err != nil {
+		s.logger.Error("main_detailscraper.py not found",
+			zap.String("expected_path", scriptPath),
+		)
+		fmt.Printf("  ❌ Detail scraper not found at: %s\n", scriptPath)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, pythonExecutable(), scriptPath)
+	cmd.Env = append(os.Environ(),
+		"PYTHONIOENCODING=utf-8",
+		"PYTHONUTF8=1",
+	)
+
+	output, err := cmd.CombinedOutput()
+	outputStr := strings.TrimSpace(string(output))
+
+	for _, line := range strings.Split(outputStr, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if line != "" {
+			fmt.Println("  [detail-py]", line)
+		}
+	}
+
+	if err != nil {
+		s.logger.Error("Detail scraper failed",
+			zap.Error(err),
+			zap.String("output", outputStr),
+		)
+		fmt.Printf("  ❌ Detail scraper error: %v\n", err)
+		return
+	}
+
+	fmt.Println("  ✅ Detail scraper completed")
+}
+
+// ─── getTotalEventCount ──────────────────────────────────────────────────────
+// Returns the current total number of events in the database.
+func (s *Scheduler) getTotalEventCount() int {
+	var count int
+	err := s.db.GetConn().QueryRow("SELECT COUNT(*) FROM events").Scan(&count)
+	if err != nil {
+		s.logger.Warn("Failed to get total event count", zap.Error(err))
+		return 0
+	}
+	return count
+}
+
+// ─── Script path helpers ─────────────────────────────────────────────────────
+
+func detailScraperScriptPath() string {
+	if cwd, err := os.Getwd(); err == nil {
+		return filepath.Join(cwd, "internal", "scrapers", "main_detailscraper.py")
+	}
+
+	_, filename, _, ok := runtime.Caller(0)
+	if ok {
+		schedulerDir := filepath.Dir(filename)
+		internalDir := filepath.Dir(schedulerDir)
+		abs, _ := filepath.Abs(filepath.Join(internalDir, "scrapers", "main_detailscraper.py"))
+		return abs
+	}
+
+	return filepath.Join("internal", "scrapers", "main_detailscraper.py")
+}
+
+func hitexScriptPath() string {
+	if cwd, err := os.Getwd(); err == nil {
+		return filepath.Join(cwd, "internal", "scrapers", "hitex.py")
+	}
+
+	_, filename, _, ok := runtime.Caller(0)
+	if ok {
+		schedulerDir := filepath.Dir(filename)
+		internalDir := filepath.Dir(schedulerDir)
+		abs, _ := filepath.Abs(filepath.Join(internalDir, "scrapers", "hitex.py"))
+		return abs
+	}
+
+	return filepath.Join("internal", "scrapers", "hitex.py")
+}
+
+func pythonExecutable() string {
+	if runtime.GOOS == "windows" {
+		return "python"
+	}
+	return "python3"
+}
+
+// ─── Existing methods (unchanged) ────────────────────────────────────────────
 
 func (s *Scheduler) cleanNewEvents() {
 	s.logger.Info("Starting event cleaning phase", zap.String("llm_provider", s.llmProvider))
@@ -334,29 +491,6 @@ func (s *Scheduler) cleanNewEvents() {
 	}
 
 	fmt.Printf("\n✅ LLM cleaning complete (%s): %d events cleaned\n", s.llmProvider, savedCount)
-}
-
-func hitexScriptPath() string {
-	if cwd, err := os.Getwd(); err == nil {
-		return filepath.Join(cwd, "internal", "scrapers", "hitex.py")
-	}
-
-	_, filename, _, ok := runtime.Caller(0)
-	if ok {
-		schedulerDir := filepath.Dir(filename)
-		internalDir := filepath.Dir(schedulerDir)
-		abs, _ := filepath.Abs(filepath.Join(internalDir, "scrapers", "hitex.py"))
-		return abs
-	}
-
-	return filepath.Join("internal", "scrapers", "hitex.py")
-}
-
-func pythonExecutable() string {
-	if runtime.GOOS == "windows" {
-		return "python"
-	}
-	return "python3"
 }
 
 func (s *Scheduler) runHitexPython() ScraperStatus {

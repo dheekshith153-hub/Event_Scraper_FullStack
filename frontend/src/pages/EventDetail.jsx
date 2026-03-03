@@ -3,307 +3,161 @@ import { useParams, useNavigate } from "react-router-dom";
 import Header from "../components/Header";
 import RecommendedEvents from "../components/RecommendedEvents";
 import SaveButton from "../components/SaveButton";
+import { formatEventDate } from "../utils/dateUtils";
+import {
+    getEventImage, getEventImageFallback,
+    formatEventName,
+    PLATFORM_POOL,
+} from "../components/EventCard";
 
 const API_BASE_URL = "";
 
 const SOURCE_LABELS = {
-    allevents: "AllEvents",
-    hasgeek: "HasGeek",
-    meetup: "Meetup",
-    townscript: "Townscript",
-    biec: "BIEC",
-    echai: "Echai",
-    hitex: "Hitex",
+    allevents: "AllEvents", hasgeek: "HasGeek", meetup: "Meetup",
+    townscript: "Townscript", biec: "BIEC", echai: "Echai", hitex: "Hitex",
 };
 
 const SOURCE_URLS = {
-    allevents: "https://allevents.in",
-    hasgeek: "https://hasgeek.com",
-    meetup: "https://meetup.com",
-    townscript: "https://townscript.com",
-    biec: "https://www.biecexpo.com",
-    echai: "https://echai.ventures",
+    allevents: "https://allevents.in", hasgeek: "https://hasgeek.com",
+    meetup: "https://meetup.com", townscript: "https://townscript.com",
+    biec: "https://www.biecexpo.com", echai: "https://echai.ventures",
     hitex: "https://hitex.co.in",
 };
 
-// ── Curated Unsplash photo pools by platform/category ──────────────────────
-// IMPORTANT: These are identical to EventCard.jsx — same pool + same index
-// formula guarantees the card image and detail hero image always match.
-const POOL_NETWORKING = [
-    "https://images.unsplash.com/photo-1515187029135-18ee286d815b?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1528605248644-14dd04022da1?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1505373877841-8d25f7d46678?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1519389950473-47ba0277781c?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1523580494863-6f3031224c94?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1475721027785-f74eccf877e2?w=900&h=420&fit=crop&auto=format",
-];
-
-const POOL_CONFERENCE = [
-    "https://images.unsplash.com/photo-1587825140708-dfaf72ae4b04?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1559223607-b4d0555ae227?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1517048676732-d65bc937f952?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1582192730841-2a682d7375f9?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1573164713714-d95e436ab8d6?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1561489413-985b06da5bee?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1511578314322-379afb476865?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1464207687429-7505649dae38?w=900&h=420&fit=crop&auto=format",
-];
-
-const POOL_TECH = [
-    "https://images.unsplash.com/photo-1531297484001-80022131f5a1?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1518770660439-4636190af475?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1504384308090-c894fdcc538d?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1563770660941-20978e870e26?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1581091226825-a6a2a5aee158?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=900&h=420&fit=crop&auto=format",
-];
-
-const POOL_EXPO = [
-    "https://images.unsplash.com/photo-1587168501724-e9354f88e7cb?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1544531585-9847b68c8c86?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1578575437130-527eed3abbec?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1497366216548-37526070297c?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1497366811353-6870744d04b2?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1542744094-3a31f272c490?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1526566661780-1a67ea3c863e?w=900&h=420&fit=crop&auto=format",
-    "https://images.unsplash.com/photo-1560439513-74b037a25d84?w=900&h=420&fit=crop&auto=format",
-];
-
-const PLATFORM_POOL = {
-    echai: POOL_NETWORKING,
-    meetup: POOL_NETWORKING,
-    hasgeek: POOL_TECH,
-    allevents: POOL_CONFERENCE,
-    townscript: POOL_CONFERENCE,
-    biec: POOL_EXPO,
-    hitex: POOL_EXPO,
-};
-
-// Same formula as EventCard — guarantees card and detail always show the same image
-function getEventImage(event) {
-    const pool = PLATFORM_POOL[event.platform] || POOL_CONFERENCE;
-    const idx = Math.abs(event.id || 0) % pool.length;
-    return pool[idx];
-}
-
-// Returns the next image in the pool as a fallback if the primary URL fails
-function getEventImageFallback(event) {
-    const pool = PLATFORM_POOL[event.platform] || POOL_CONFERENCE;
-    const idx = (Math.abs(event.id || 0) + 1) % pool.length;
-    return pool[idx];
-}
-
-// ── Date formatter ────────────────────────────────────────────────────────
-function formatDateCard(dateStr) {
-    if (!dateStr) return "Date TBA";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        const [y, m, d] = dateStr.split("-").map(Number);
-        return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
-            month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
-        });
-    }
-    if (/^\d{4}-\d{2}-\d{2}T/.test(dateStr)) {
-        const d = new Date(dateStr);
-        if (!isNaN(d.getTime()))
-            return d.toLocaleDateString("en-US", {
-                month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
-            });
-    }
-    const rm = dateStr.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
-    if (rm) {
-        const months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
-        const d = new Date(Date.UTC(+rm[3], months.indexOf(rm[2].toLowerCase()), +rm[1]));
-        if (!isNaN(d.getTime()))
-            return d.toLocaleDateString("en-US", {
-                month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
-            });
-    }
-    const lm = dateStr.match(/(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})/i);
-    if (lm) {
-        const ym = dateStr.match(/\d{4}/);
-        const yr = ym ? +ym[0] : new Date().getFullYear();
-        const d = new Date(`${lm[1]} ${lm[2]}, ${yr}`);
-        if (!isNaN(d.getTime()))
-            return d.toLocaleDateString("en-US", {
-                month: "short", day: "2-digit", year: "numeric", timeZone: "UTC",
-            });
-    }
-    return dateStr;
-}
+// ── HTML → plain text ─────────────────────────────────────────────────────────
+function isHTML(str) { return /<[a-z][\s\S]*>/i.test(str || ""); }
 
 function htmlToPlainText(html) {
     if (!html) return "";
-    let text = html
+    return html
         .replace(/<script[\s\S]*?<\/script>/gi, "")
         .replace(/<style[\s\S]*?<\/style>/gi, "")
-        .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
-        .replace(/<iframe[\s\S]*?<\/iframe>/gi, "")
         .replace(/<br\s*\/?>/gi, "\n")
-        .replace(/<\/p>/gi, "\n")
-        .replace(/<\/li>/gi, "\n")
-        .replace(/<\/div>/gi, "\n")
-        .replace(/<\/h[1-6]>/gi, "\n")
-        .replace(/<\/tr>/gi, "\n")
+        .replace(/<\/p>/gi, "\n").replace(/<\/li>/gi, "\n")
+        .replace(/<\/div>/gi, "\n").replace(/<\/h[1-6]>/gi, "\n")
         .replace(/<[^>]+>/g, "")
         .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
         .replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-        .replace(/&apos;/g, "'").replace(/&ensp;/g, " ").replace(/&emsp;/g, " ")
-        .replace(/&thinsp;/g, " ").replace(/&#8203;/g, "").replace(/&shy;/g, "")
         .replace(/&#\d+;/g, "").replace(/&\w+;/g, " ")
-        .replace(/[\u200B\u200C\u200D\uFEFF\u00AD]/g, "")
-        .replace(/[\u0000-\u0009\u000B-\u001F\u007F]/g, "")
-        .replace(/[◆❖•➤→▸✦★✓✔✗✘►▶◉○●■□▪▫⬤⬛⬜♦♣♠♥▲▼◀▻△▽◁▷⟶⟹⟵⇒⇐⇔·‣⁃※†‡§¶]/g, "")
-        .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}]/gu, "")
-        .replace(/[\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]/g, " ")
-        .replace(/[ \t]+/g, " ")
-        .replace(/\n\s*\n+/g, "\n");
-    return text.split("\n").map(l => l.trim()).filter(l => l !== "").join("\n").trim();
+        .replace(/[\u200B\u200C\u200D\uFEFF]/g, "")
+        .replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n")
+        .split("\n").map(l => l.trim()).filter(l => l !== "").join("\n").trim();
 }
 
-function isHTML(str) { return /<[a-z][\s\S]*>/i.test(str || ""); }
+// ── Patterns: lines to drop entirely ─────────────────────────────────────────
+const DROP_LINE = [
+    // Bare URLs
+    /^https?:\/\/\S+$/i,
+    // Social / messaging links
+    /slack\.com\/|whatsapp\.com\/|t\.me\/|discord\.gg\//i,
+    /wa\.me\/|chat\.whatsapp|telegram\.me/i,
+    // CTA / spam lines
+    /^(also check out|stay in the loop|join the community|join us|follow us)/i,
+    /^(subscribe|sign up|register|get (your )?(tickets?|passes?))/i,
+    /^(buy tickets?|book (now|here)|click here|read more|learn more)/i,
+    /^(copyright|all rights reserved|powered by)/i,
+    /^(home|about|contact|terms|privacy|×|close|menu|login|sign ?in|sign ?up)$/i,
+    // Standalone dates or city names
+    /^\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}/i,
+    /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2},?\s+\d{4}/i,
+    /^\d{4}-\d{2}-\d{2}(T.*)?$/,
+    /^(bengaluru|bangalore|hyderabad|mumbai|delhi|chennai|kolkata|pune|online|virtual)$/i,
 
-function cleanDescription(text, eventName = "", location = "") {
+    // ── Phone numbers ─────────────────────────────────────────────────────────
+    // Indian 10-digit (with or without +91 / 0)
+    /(?:\+91[\s\-]?|^0)?[6-9]\d{9}/,
+    // Generic international format (brackets, spaces, dashes)
+    /\+?\d[\d\s\-\(\)]{8,14}\d/,
+    // Lines that are primarily a phone number
+    /^\s*(?:\+?\d[\d\s\-\(\).]{7,})\s*$/,
+
+    // ── Physical addresses ────────────────────────────────────────────────────
+    // Door / Flat / Plot / House / Shop number
+    /\b(?:no\.?|flat|door\s+no\.?|plot\s+no\.?|house\s+no\.?|shop\s+no\.?|h\.?\s*no\.?)\s*\d+/i,
+    // Street-level: "12, MG Road", "4th Cross", "Sector 5"
+    /\d+\s*[,\-]?\s*(?:[a-z]+\s+)*(?:road|street|st\.|lane|avenue|colony|nagar|sector\s*\d|phase\s*\d|cross|main|circle|layout|enclave|extension)\b/i,
+    // Indian PIN codes (6-digit, optionally prefixed)
+    /\b(?:pin\s*:?\s*)?\d{6}\b/i,
+    // Full address lines (contains comma-separated location parts)
+    /\d+[,\s]+[a-z\s]+(?:road|street|colony|nagar|layout|bangalore|hyderabad|mumbai|delhi|chennai|pune|india)\b/i,
+
+    // ── Email addresses ───────────────────────────────────────────────────────
+    /[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i,
+
+    // ── Contact CTA lines ─────────────────────────────────────────────────────
+    /(?:contact|reach|call|email|write)\s+(?:us|me)\s+(?:at|on|via)/i,
+    /for\s+(more\s+)?(?:details?|info(?:rmation)?|queries|enquir(?:y|ies))\s*[,:]?\s*(?:contact|call|email|whatsapp)/i,
+
+    // Too short to be meaningful prose
+    /^.{1,15}$/,
+];
+
+const SECTION_BREAKS = [
+    /^(agenda|schedule|you'?ll learn|call for|speakers?:|organis(er|ers?):)\b/i,
+    /^(slack|whatsapp|telegram|discord)\b.*:/i,
+];
+
+// ── Inline token stripper (for partial matches mid-sentence) ─────────────────
+function stripInlineNoise(line) {
+    return line
+        // Strip email addresses
+        .replace(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/gi, "")
+        // Strip bare URLs
+        .replace(/https?:\/\/\S+/gi, "")
+        .replace(/www\.\S+/gi, "")
+        // Strip Indian phone numbers (+91 / 10-digit mobile)
+        .replace(/(?:\+91[\s\-]?)?[6-9]\d{9}/g, "")
+        // Strip generic phone formats (e.g. +1-800-555-0100)
+        .replace(/\+?\d[\d\s\-\(\)]{8,14}\d/g, "")
+        // Strip Indian PIN codes
+        .replace(/\b\d{6}\b/g, "")
+        // Clean up orphaned punctuation after stripping
+        .replace(/[,\-–|]+\s*[,\-–|]+/g, ",")
+        .replace(/\s+[,\-–|]\s*$/g, "")
+        .replace(/^\s*[,\-–|]+\s*/g, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+}
+
+// ── Sentence grammar fixer ────────────────────────────────────────────────────
+function fixGrammar(line) {
+    if (!line) return "";
+    // Capitalise first character
+    let s = line.charAt(0).toUpperCase() + line.slice(1);
+    // Add full stop if no terminal punctuation
+    if (!/[.!?]$/.test(s)) s += ".";
+    return s;
+}
+
+// ── Main cleaner ─────────────────────────────────────────────────────────────
+function cleanDescription(text) {
     if (!text) return "";
-    text = text.split("\n").map(line =>
-        line.replace(/^[\s◆❖•➤→▸✦★✓✔✗✘►▶\-–—*·:]+/, "").trim()
-    ).join("\n");
-
-    const dropLine = [
-        /^https?:\/\/\S+$/i,
-        /slack\.com\/|whatsapp\.com\/|t\.me\/|discord\.gg\//i,
-        /https?:\/\/\S{20,}/i,
-        /^(also check out|stay in the loop|are you interested|join the community)/i,
-        /^(join us|follow us|subscribe|sign up|register|get (your )?(tickets?|passes?))/i,
-        /^(buy tickets?|book (now|here|your)|click here|read more|learn more)/i,
-        /^(find out more|view (all|more)|load more|share (this|event)|newsletter)/i,
-        /^(copyright|all rights reserved|powered by|in association with|more coming soon)/i,
-        /^(call for|submit your|cfp|we('re| are) opening|suggested themes?:)/i,
-        /^(agenda|schedule|welcome \+|q&a|networking):?\s*$/i,
-        /^(home|about|contact|terms|privacy|cookie|×|close|menu|search|login|sign ?in|sign ?up|back|next|previous)$/i,
-        /^(monday|tuesday|wednesday|thursday|friday|saturday|sunday),?\s+/i,
-        /^\d{1,2}\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{4}/i,
-        /^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\s+\d{1,2},?\s+\d{4}/i,
-        /^\d{4}-\d{2}-\d{2}(T.*)?$/,
-        /^(bengaluru|bangalore|hyderabad|mumbai|delhi|chennai|kolkata|pune|online|virtual)$/i,
-        /^₹[\d,]+/, /^(registration fees?|early bird|fees? will)/i,
-        /^from \d+(st|nd|rd|th)?/i, /^(till|until) \d+(st|nd|rd|th)?/i,
-        /^.{1,15}$/,
-    ];
-
-    const nameWords = new Set(
-        eventName.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 3)
-    );
-    const isNameLine = (line) => {
-        if (nameWords.size === 0) return false;
-        const lw = line.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 3);
-        if (!lw.length) return false;
-        return lw.filter(w => nameWords.has(w)).length / Math.max(lw.length, nameWords.size) > 0.6;
-    };
-    const locWords = location.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(w => w.length > 3);
-    const isLocationLine = (line) => {
-        if (!locWords.length) return false;
-        const lw = line.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/);
-        return lw.filter(w => locWords.includes(w)).length >= 2 && line.length < 130;
-    };
-
-    const sectionBreaks = [
-        /^(agenda|schedule|you'?ll learn|what you'?ll learn|join the community|call for|in association with|speakers?:|organis(er|ers?):)\b/i,
-        /^(slack|whatsapp|telegram|discord)\b.*:/i,
-        /^(1\.|2\.|3\.)\s+https?/i,
-    ];
 
     const lines = text.split("\n").filter(line => {
         const t = line.trim();
         if (!t) return false;
-        if (dropLine.some(p => p.test(t))) return false;
-        if (isNameLine(t)) return false;
-        if (isLocationLine(t)) return false;
+        // Drop if any DROP_LINE pattern matches
+        if (DROP_LINE.some(p => p.test(t))) return false;
         return true;
     });
 
     const collected = [];
     for (const line of lines) {
-        if (collected.length > 0 && sectionBreaks.some(p => p.test(line.trim()))) break;
-        collected.push(line.trim());
-        if (collected.length >= 6) break;
+        if (collected.length > 0 && SECTION_BREAKS.some(p => p.test(line.trim()))) break;
+
+        // Strip any inline noise that didn't trigger a full-line drop
+        const cleaned = stripInlineNoise(line.trim());
+        // Skip if stripping left the line too short or empty
+        if (!cleaned || cleaned.length < 16 || cleaned.split(" ").length < 4) continue;
+
+        collected.push(fixGrammar(cleaned));
+        if (collected.length >= 10) break;
     }
 
-    if (!collected.length) return "";
-
-    let paragraph = collected.join(" ").trim()
-        .replace(/[\u200B-\u200D\uFEFF]/g, "")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-
-    if (paragraph.length > 400) {
-        let cut = paragraph.lastIndexOf(". ", 400);
-        if (cut > 100) {
-            paragraph = paragraph.slice(0, cut + 1);
-        } else {
-            cut = paragraph.lastIndexOf(" ", 400);
-            if (cut > 100) paragraph = paragraph.slice(0, cut) + "...";
-        }
-    }
-
-    return paragraph;
+    return collected.join("\n").trim();
 }
 
-// ── Event name formatter ──────────────────────────────────────────────────
-const ALWAYS_UPPER = new Set([
-    "AWS", "AI", "ML", "API", "UI", "UX", "SQL", "NoSQL", "REST", "SDK",
-    "MVP", "SaaS", "PaaS", "IaaS", "IoT", "AR", "VR", "XR", "NFT",
-    "Web3", "HTML", "CSS", "JS", "TS", "PHP", "JVM", "GCP", "GIS",
-    "CI", "CD", "DevOps", "DevSecOps", "SEO", "CRM", "ERP", "HR",
-    "B2B", "B2C", "D2C", "BIEC", "HITEX", "TBA", "SLM", "LORA", "RAG",
-]);
-
-const ALWAYS_LOWER = new Set([
-    "a", "an", "the", "and", "but", "or", "for", "nor", "on", "at",
-    "to", "by", "in", "of", "up", "as", "vs", "via",
-]);
-
-const STRIP_PREFIXES = [
-    /^in\s+person\s*[:\-–]?\s*/i,
-    /^event\s+announcement\s*[:\-–]?\s*/i,
-    /^free\s+event\s*[:\-–]?\s*/i,
-    /^announcement\s*[:\-–]?\s*/i,
-    /^upcoming\s*[:\-–]?\s*/i,
-    /^online\s+event\s*[:\-–]?\s*/i,
-];
-
-function stripEmojis(str) {
-    return str
-        .replace(/[\p{Emoji_Presentation}\p{Extended_Pictographic}]/gu, "")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-}
-
-function toTitleCase(str) {
-    const words = str.split(/(\s+|-)/);
-    return words.map((token, i) => {
-        if (/^[\s-]+$/.test(token)) return token;
-        const upper = token.toUpperCase();
-        const lower = token.toLowerCase();
-        if (ALWAYS_UPPER.has(upper)) return upper;
-        if (/[®™©]/.test(token) && token !== token.toUpperCase()) return token;
-        if (i > 0 && ALWAYS_LOWER.has(lower)) return lower;
-        return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
-    }).join("");
-}
-
-function formatEventName(raw) {
-    if (!raw) return "";
-    let name = stripEmojis(raw);
-    for (const pattern of STRIP_PREFIXES) {
-        name = name.replace(pattern, "");
-    }
-    name = name.replace(/\s{2,}/g, " ").trim();
-    return toTitleCase(name);
-}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function EventDetail() {
     const { id } = useParams();
@@ -366,35 +220,27 @@ export default function EventDetail() {
     const parentSiteURL = SOURCE_URLS[event.platform] || officialWebsite;
     const parentSiteLabel = SOURCE_LABELS[event.platform] || event.platform;
 
-    // ── Hero image: same curated Unsplash pool as EventCard (never scraped) ──
     const heroSrc = heroImgErr ? getEventImageFallback(event) : getEventImage(event);
-
     const displayName = formatEventName(event.event_name);
+    const displayDate = formatEventDate(event.date || event.date_time);
 
-    // ── Location: city_normalized only (matches EventCard) ───────────────
     const cityNorm = event.city_normalized;
-    const displayCity =
-        cityNorm && cityNorm !== "Unknown" && cityNorm.trim() !== ""
-            ? cityNorm
-            : null;
+    const displayCity = cityNorm && cityNorm !== "Unknown" && cityNorm.trim() !== ""
+        ? cityNorm : null;
 
     const rawDesc = eventDetail?.full_description || event.description || "";
     const stripped = isHTML(rawDesc) ? htmlToPlainText(rawDesc) : rawDesc.trim();
-    const plainDesc = cleanDescription(stripped, event.event_name, event.location);
-    const cardDate = formatDateCard(event.date || event.date_time);
+    const plainDesc = cleanDescription(stripped);
 
     return (
         <div className="min-h-screen" style={{ background: "#fff8f0", fontFamily: "'Inter', sans-serif" }}>
             <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
             <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet" />
-
             <Header />
 
-            {/* ══════════════ HERO ══════════════ */}
+            {/* ══ HERO ══ */}
             <div style={{ position: "relative", height: 420, overflow: "hidden" }}>
-                <img
-                    src={heroSrc}
-                    alt={displayName}
+                <img src={heroSrc} alt={displayName}
                     style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                     onError={() => setHeroImgErr(true)}
                 />
@@ -446,7 +292,7 @@ export default function EventDetail() {
                                     d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
                             </svg>
                             <span style={{ color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: 500 }}>
-                                {cardDate}
+                                {displayDate}
                             </span>
                         </div>
                         {displayCity && (
@@ -465,7 +311,6 @@ export default function EventDetail() {
                     </div>
                 </div>
             </div>
-            {/* ══════════════ END HERO ══════════════ */}
 
             <main className="max-w-7xl mx-auto px-4 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -477,8 +322,6 @@ export default function EventDetail() {
 
                             {eventDetail?.organizer && (
                                 <div className="mb-5">
-                                    <p className="text-xs font-medium tracking-wide mb-1"
-                                        style={{ color: "#92140c", opacity: 0.7 }}>ORGANISED BY</p>
                                     <p className="text-sm font-medium" style={{ color: "#1e1e24" }}>
                                         {eventDetail.organizer}
                                     </p>
@@ -534,7 +377,8 @@ export default function EventDetail() {
                             {eventDetail?.speakers_json && (() => {
                                 try {
                                     const sp = JSON.parse(eventDetail.speakers_json);
-                                    return sp.length > 0 ? (
+                                    if (!sp.length) return null;
+                                    return (
                                         <div className="mt-7">
                                             <div style={{ height: 1, background: "rgba(146,20,12,0.08)", marginBottom: "1.4rem" }} />
                                             <h2 className="text-xl font-medium mb-3"
@@ -550,7 +394,7 @@ export default function EventDetail() {
                                                 ))}
                                             </div>
                                         </div>
-                                    ) : null;
+                                    );
                                 } catch { return null; }
                             })()}
 
@@ -603,7 +447,6 @@ export default function EventDetail() {
                     </div>
                 </div>
 
-                {/* ══════════════ RECOMMENDED ══════════════ */}
                 <RecommendedEvents eventId={id} limit={4} />
             </main>
         </div>
