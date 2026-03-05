@@ -42,10 +42,56 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/119.0.0.0 Safari/537.36",
 ]
 
+# Maps AllEvents URL slug → clean display name stored in city_normalized column.
+# Indian cities already handled by models.Event.normalize(); US cities need
+# explicit mapping here since normalize() doesn't know them.
+CITY_DISPLAY_NAMES = {
+    # ── India (existing) ─────────────────────────────────────────────────────
+    "bangalore":    "Bengaluru",
+    "mumbai":       "Mumbai",
+    "delhi":        "Delhi",
+    "hyderabad":    "Hyderabad",
+    "chennai":      "Chennai",
+    "pune":         "Pune",
+    "kolkata":      "Kolkata",
+    "ahmedabad":    "Ahmedabad",
+    # ── USA (new) ────────────────────────────────────────────────────────────
+    "new-york":     "New York",
+    "san-francisco":"San Francisco",
+    "seattle":      "Seattle",
+    "austin":       "Austin",
+    "boston":       "Boston",
+    "chicago":      "Chicago",
+    "los-angeles":  "Los Angeles",
+    "denver":       "Denver",
+    "atlanta":      "Atlanta",
+    "miami":        "Miami",
+}
+
 
 class AllEventsScraper(BaseScraper):
-    # Use the /technology category directly — matches the real website URL
-    CITIES = ["bangalore", "mumbai", "delhi", "hyderabad", "chennai", "pune", "kolkata", "ahmedabad","new-york","sanford"]
+    CITIES = [
+        # ── India ────────────────────────────────────────────────────────────
+        "bangalore",
+        "mumbai",
+        "delhi",
+        "hyderabad",
+        "chennai",
+        "pune",
+        "kolkata",
+        "ahmedabad",
+        # ── USA ──────────────────────────────────────────────────────────────
+        "new-york",
+        "san-francisco",
+        "seattle",
+        "austin",
+        "boston",
+        "chicago",
+        "los-angeles",
+        "denver",
+        "atlanta",
+        "miami",
+    ]
 
     def __init__(self, timeout=30, retries=3):
         super().__init__(timeout, retries)
@@ -60,7 +106,8 @@ class AllEventsScraper(BaseScraper):
 
         for city in self.CITIES:
             time_mod.sleep(2 + random.randint(0, 2))
-            print(f"  AllEvents: Scraping {city}/technology ...")
+            display = CITY_DISPLAY_NAMES.get(city, city)
+            print(f"  AllEvents: Scraping {city}/technology ({display}) ...")
 
             evs = self._scrape_city(city)
 
@@ -72,7 +119,7 @@ class AllEventsScraper(BaseScraper):
                     all_events.append(e)
                     new_count += 1
 
-            print(f"  AllEvents: {city} → {len(evs)} scraped, {new_count} new")
+            print(f"  AllEvents: {display} → {len(evs)} scraped, {new_count} new")
 
         print(f"AllEvents: Found {len(all_events)} unique upcoming events")
         return all_events
@@ -81,10 +128,8 @@ class AllEventsScraper(BaseScraper):
         ua = USER_AGENTS[self._ua_index % len(USER_AGENTS)]
         self._ua_index += 1
 
-        # URL pattern: /city/technology
         list_url = f"{ALLEVENTS_BASE}/{city}/technology"
 
-        # Page 1
         try:
             resp = self._session.get(
                 list_url, headers={"User-Agent": ua}, timeout=PER_REQUEST_TIMEOUT
@@ -101,13 +146,11 @@ class AllEventsScraper(BaseScraper):
         collected = _parse_event_cards(doc, city)
         print(f"    AllEvents: Page 1 → {len(collected)} events")
 
-        # Detect View More endpoint
         body_str = body.decode("utf-8", errors="replace")
         endpoint = _detect_view_more_endpoint(body_str)
         if not endpoint:
             endpoint = "https://allevents.in/api/events/list"
 
-        # Paginate View More
         for page in range(2, ALLEVENTS_MAX_PAGES + 1):
             time_mod.sleep(0.5 + random.random())
 
@@ -152,12 +195,10 @@ class AllEventsScraper(BaseScraper):
         body = resp.content
         trim = body.strip()
 
-        # HTML directly?
         if trim and trim[0:1] == b"<":
             doc = BeautifulSoup(body, "html.parser")
             return _parse_event_cards(doc, city)
 
-        # JSON response
         try:
             parsed = json.loads(body)
         except json.JSONDecodeError:
@@ -167,31 +208,35 @@ class AllEventsScraper(BaseScraper):
         if parsed.get("error", 0) != 0:
             return []
 
-        # "html" key?
         if "html" in parsed and parsed["html"].strip():
             doc = BeautifulSoup(parsed["html"], "html.parser")
             return _parse_event_cards(doc, city)
 
-        # "data" array?
         if "data" in parsed and isinstance(parsed["data"], list):
             return _parse_data_array(parsed["data"], city)
 
         return []
 
-    def _filter_and_normalize(self, events: list[Event], fallback_city: str) -> list[Event]:
+    def _filter_and_normalize(self, events: list[Event], city: str) -> list[Event]:
+        # Resolve the clean display name once for this city
+        city_normalized = CITY_DISPLAY_NAMES.get(city, city.replace("-", " ").title())
+
         out = []
         for e in events:
             name = e.event_name.strip()
             if not name:
                 continue
-            loc = e.location.strip() or fallback_city
+
+            loc = e.location.strip() or city_normalized
             e.location = loc
+
+            # Always stamp city_normalized so US cities store correctly in DB
+            e.city_normalized = city_normalized
 
             if is_online_location(loc):
                 continue
 
             if not is_tech_relevant(name):
-                # LLM second-chance
                 is_tech, reason = classify_tech_event(name, e.description)
                 if not is_tech:
                     continue
@@ -211,6 +256,8 @@ class AllEventsScraper(BaseScraper):
 
 def _parse_event_cards(doc: BeautifulSoup, city: str) -> list[Event]:
     events = []
+    city_normalized = CITY_DISPLAY_NAMES.get(city, city.replace("-", " ").title())
+
     for li in doc.select("li.event-card.event-card-link[data-link]"):
         data_link = li.get("data-link", "").strip()
         if not data_link:
@@ -225,14 +272,13 @@ def _parse_event_cards(doc: BeautifulSoup, city: str) -> list[Event]:
         date_str = date_el.get_text(strip=True) if date_el else ""
 
         location_el = li.select_one("div.location")
-        location = location_el.get_text(strip=True) if location_el else ""
-        if not location:
-            location = city
+        location = location_el.get_text(strip=True) if location_el else city_normalized
 
         events.append(Event(
             event_name=title,
             date_time=date_str,
             location=location,
+            city_normalized=city_normalized,   # ← set here so DB always has clean name
             website=_absolute_url(data_link),
             event_type="Offline",
             platform="allevents",
@@ -241,8 +287,10 @@ def _parse_event_cards(doc: BeautifulSoup, city: str) -> list[Event]:
 
 
 def _parse_data_array(data: list, city: str) -> list[Event]:
-    """Parse JSON data array into events (synthetic from View More response)."""
+    """Parse JSON data array into events (from View More response)."""
     events = []
+    city_normalized = CITY_DISPLAY_NAMES.get(city, city.replace("-", " ").title())
+
     for row in data:
         if not isinstance(row, dict):
             continue
@@ -251,14 +299,13 @@ def _parse_data_array(data: list, city: str) -> list[Event]:
         if not link:
             continue
         start = row.get("start_time_display", "")
-        loc = row.get("location", "")
-        if not loc:
-            loc = city
+        loc   = row.get("location", "") or city_normalized
 
         events.append(Event(
             event_name=name,
             date_time=start,
             location=loc,
+            city_normalized=city_normalized,   # ← set here too
             website=_absolute_url(link),
             event_type="Offline",
             platform="allevents",

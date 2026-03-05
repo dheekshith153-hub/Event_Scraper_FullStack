@@ -12,6 +12,9 @@ FIXES:
   5. DB connection lost after rollback → reconnect on error
   6. bridge.go callback(EventID=0) → skip zero-id details in Python too
   7. Phone numbers, addresses, emails stripped before save (sanitize_for_display)
+  8. [FIX] BIEC parser: now extracts eve-detail/eve-venue/eve-org HTML structure
+  9. [FIX] eChai parser: passes scraped agenda text to Gemma for 8-line description
+  10. [FIX] Removed duplicate fetch_with_retry call in _scrape_event_detail
 """
 
 import html as html_lib
@@ -27,12 +30,13 @@ from bs4 import BeautifulSoup
 
 from base_scraper import BaseScraper, fetch_with_chrome, SELENIUM_AVAILABLE, get_db_connection
 from models import ScrapedDetail, EventFromDB
-from utils import generate_description_from_title
+from utils import generate_description_from_title, generate_description_from_context
 
-DETAIL_MIN_DELAY  = 5    # was 3 — gives CPU breathing room between events
-DETAIL_MAX_DELAY  = 10   # was 7
+DETAIL_MIN_DELAY  = 5
+DETAIL_MAX_DELAY  = 10
 RESCRAPE_DAYS     = 7
-BATCH_SIZE        = 75   # was 500 — scheduler runs every 10min, so ~450/hr still processed
+# No batch limit — process ALL events missing details in each cycle.
+# The Go scheduler's 60-minute context timeout acts as the safety net.
 
 # Max lengths that match the actual DB schema (TEXT cols, but truncate for safety)
 MAX_DESC_LEN      = 8000
@@ -218,6 +222,60 @@ def sanitize_for_display(text: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  BIEC DETAIL PARSER HELPERS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _biec_extract_label_pairs(col_div) -> dict:
+    """
+    Extract <b>Label:</b> <p>Value</p> sibling pairs from a BIEC column div.
+
+    BIEC uses a pattern where a <b> tag (containing "Label:") is immediately
+    followed by a <p> tag with the value, as direct siblings inside the column.
+    Example:
+        <b>Start:</b>
+        <p>January 21 @ 9:00 am</p>
+
+    Returns a dict of {label_without_colon: value_text}.
+    """
+    pairs = {}
+    # Only look at direct children that are <b> tags containing a colon
+    for b_tag in col_div.find_all("b"):
+        label_text = b_tag.get_text(strip=True)
+        if ":" not in label_text:
+            continue  # bare <b>Name</b> without colon = not a label
+        label = label_text.rstrip(":").strip()
+        # Walk forward through siblings to find the next <p>
+        sib = b_tag.next_sibling
+        while sib is not None:
+            if hasattr(sib, "name") and sib.name == "p":
+                pairs[label] = sib.get_text(strip=True)
+                break
+            sib = sib.next_sibling
+    return pairs
+
+
+def _biec_extract_onclick_url(col_div) -> str:
+    """
+    Extract the external URL from BIEC's onclick pattern:
+        <a href="#" onclick="window.open('https://...');return false;">...</a>
+    Returns the URL string, or "" if not found.
+    """
+    for a in col_div.find_all("a"):
+        onclick = a.get("onclick", "")
+        if onclick:
+            m = re.search(r'window\.open\(["\']([^"\']+)["\']', onclick)
+            if m:
+                url = m.group(1).strip()
+                if url and "biec.in" not in url:
+                    return url
+        # Fallback: plain href that points outside biec.in
+        href = a.get("href", "").strip()
+        if href.startswith("http") and "biec.in" not in href:
+            return href
+    return ""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 
 class DetailScraper(BaseScraper):
     def __init__(self, timeout=30, retries=3):
@@ -292,7 +350,7 @@ class DetailScraper(BaseScraper):
     def scrape(self):
         """Main loop: get events needing details and scrape each."""
         events = self._get_events_from_db()
-        print(f"DetailScraper: {len(events)} events to process (batch_size={BATCH_SIZE})")
+        print(f"DetailScraper: {len(events)} events to process")
 
         for i, event in enumerate(events):
             print(f"\n[{i + 1}/{len(events)}] {event.name}")
@@ -333,8 +391,7 @@ class DetailScraper(BaseScraper):
                 OR ed.last_scraped < NOW() - INTERVAL '%(days)s days'
               )
             ORDER BY e.created_at DESC
-            LIMIT %(limit)s
-        """, {"days": RESCRAPE_DAYS, "limit": BATCH_SIZE})
+        """, {"days": RESCRAPE_DAYS})
 
         rows = cur.fetchall()
         cur.close()
@@ -350,11 +407,13 @@ class DetailScraper(BaseScraper):
         platform = event.platform.lower()
 
         html = ""
-        if platform in ("townscript", "meetup", "echai"):
+        if platform in ("townscript", "meetup", "hasgeek"):
+            # These are JS/React-rendered — plain requests returns an empty shell
             # Reuse shared driver — avoids spawning/killing Chrome per event
-            html = self._fetch_with_shared_chrome(event.website, timeout=20)
+            html = self._fetch_with_shared_chrome(event.website, timeout=25)
         else:
-            resp = self.fetch_with_retry(event.website)
+            # eChai, BIEC, AllEvents, Hitex etc. are server-rendered
+            resp = self.fetch_with_retry(event.website)   # FIX: removed duplicate call
             if resp:
                 html = resp.text
 
@@ -424,15 +483,81 @@ class DetailScraper(BaseScraper):
         return detail
 
     def _parse_hasgeek_detail(self, doc, event: EventFromDB) -> ScrapedDetail:
+        """
+        HasGeek event pages render all content inside <div class="markdown">.
+        Structure (confirmed from live HTML):
+          <div class="markdown">
+            <h1>Workshop title</h1>
+            <h2 id="h:abstract">Abstract</h2>   ← we want the <p> tags after this
+            <h2 id="h:target-audience">...</h2>
+            <h2 id="h:learning-outcomes">...</h2>
+            <h2 id="h:prerequisites">...</h2>
+            <h2 id="h:resources">...</h2>
+            <h1 id="h:workshop-modules">...</h1> ← stop here (too technical / long)
+            ...contact info at bottom (stripped by sanitize_for_display)
+          </div>
+        Strategy:
+          1. Find <div class="markdown">
+          2. Extract Abstract section paragraphs if present
+          3. Fall back to Target Audience + first intro paragraphs
+          4. Fall back to og:description meta tag
+        """
         detail = ScrapedDetail(event_id=event.id)
-        desc_el = doc.select_one(".about, .description, .markdown, article .content")
-        if desc_el:
-            detail.full_description = _trunc(
-                _clean_to_plain_text(desc_el.get_text()), MAX_DESC_LEN
-            )
+
+        markdown_div = doc.select_one("div.markdown")
+
+        if markdown_div:
+            # ── Try to extract the Abstract section specifically ──────────────
+            abstract_text = _extract_hasgeek_section(markdown_div, "abstract")
+            if abstract_text and len(abstract_text) > 80:
+                detail.full_description = _trunc(abstract_text, MAX_DESC_LEN)
+            else:
+                # ── Fall back: first substantial <p> blocks in the div ────────
+                # Stop before workshop modules (too long/technical) and
+                # before contact/resources sections
+                STOP_IDS = {"h:workshop-modules", "h:resources", "h:contact-information"}
+                paras = []
+                for tag in markdown_div.children:
+                    if not hasattr(tag, "get"):
+                        continue
+                    tag_id = tag.get("id", "")
+                    if tag_id in STOP_IDS:
+                        break
+                    if tag.name == "p":
+                        text = _clean_to_plain_text(tag.get_text())
+                        if len(text) > 40:
+                            paras.append(text)
+                    if len(" ".join(paras)) >= MAX_DESC_LEN:
+                        break
+
+                if paras:
+                    detail.full_description = _trunc("\n\n".join(paras), MAX_DESC_LEN)
+
+        # ── Organizer from page header ────────────────────────────────────────
+        for org_sel in [".project-header__title", ".project-title",
+                        "header h2", "header h3", ".organizer-name"]:
+            org_el = doc.select_one(org_sel)
+            if org_el:
+                text = org_el.get_text(strip=True)
+                if text:
+                    detail.organizer = _trunc(text, MAX_SHORT_LEN)
+                    break
+
+        # ── og:image is reliably set on HasGeek ──────────────────────────────
         img = doc.select_one("meta[property='og:image']")
         if img:
             detail.image_url = _trunc(img.get("content", ""), MAX_URL_LEN)
+
+        # ── og:description as final fallback ─────────────────────────────────
+        if not detail.full_description:
+            for meta_sel in ["meta[property='og:description']", "meta[name='description']"]:
+                og = doc.select_one(meta_sel)
+                if og:
+                    content = og.get("content", "").strip()
+                    if len(content) > 80:
+                        detail.full_description = _trunc(content, MAX_DESC_LEN)
+                        break
+
         return detail
 
     def _parse_meetup_detail(self, doc, event: EventFromDB) -> ScrapedDetail:
@@ -453,37 +578,286 @@ class DetailScraper(BaseScraper):
         return detail
 
     def _parse_echai_detail(self, doc, event: EventFromDB) -> ScrapedDetail:
+        """
+        eChai event page structure (confirmed from live HTML):
+          <div class="event_short_description trix-content">
+            <div class="trix-content">
+              <div>First paragraph text...<br><br></div>
+              <div>Second paragraph text...<br><br></div>
+              <div>Third paragraph text...</div>
+            </div>
+          </div>
+
+        Strategy:
+          Tier 1: Extract text from .event_short_description container divs
+          Tier 2: Standalone .trix-content
+          Tier 3: Generic fallback selectors
+          Tier 4: og:description meta tag
+          Final:  Pass all extracted content to Gemma for 8-sentence description
+        """
         detail = ScrapedDetail(event_id=event.id)
-        for sel in [
-            ".event-description", ".about-event", ".description",
-            "article .content", "main p",
-        ]:
+
+        # ── Tier 1: eChai's actual description container ──────────────────────
+        # Try the wrapping class first, then the inner trix-content directly.
+        # The outer div has BOTH classes: "event_short_description trix-content"
+        for sel in [".event_short_description", ".event_short_description .trix-content"]:
             el = doc.select_one(sel)
             if el:
-                text = _clean_to_plain_text(el.get_text())
-                if len(text) > 40:
-                    detail.full_description = _trunc(text, MAX_DESC_LEN)
+                # Content lives in <div> children — collect each div's text
+                parts = []
+                for child in el.find_all("div", recursive=False):
+                    text = _clean_to_plain_text(child.get_text())
+                    if len(text) > 20:
+                        parts.append(text)
+                # Fallback: if no child divs found, use full container text
+                if not parts:
+                    text = _clean_to_plain_text(el.get_text())
+                    if len(text) > 40:
+                        parts.append(text)
+                if parts:
+                    detail.full_description = _trunc("\n\n".join(parts), MAX_DESC_LEN)
                     break
+
+        # ── Tier 2: standalone trix-content (some eChai pages omit the wrapper) ─
+        if not detail.full_description:
+            el = doc.select_one(".trix-content")
+            if el:
+                parts = []
+                for child in el.find_all("div", recursive=False):
+                    text = _clean_to_plain_text(child.get_text())
+                    if len(text) > 20:
+                        parts.append(text)
+                if not parts:
+                    text = _clean_to_plain_text(el.get_text())
+                    if len(text) > 40:
+                        parts.append(text)
+                if parts:
+                    detail.full_description = _trunc("\n\n".join(parts), MAX_DESC_LEN)
+
+        # ── Tier 3: generic fallbacks for older eChai page layouts ───────────
+        if not detail.full_description:
+            for sel in [".event-description", ".about-event", ".description",
+                        "article .content", "main p"]:
+                el = doc.select_one(sel)
+                if el:
+                    text = _clean_to_plain_text(el.get_text())
+                    if len(text) > 40:
+                        detail.full_description = _trunc(text, MAX_DESC_LEN)
+                        break
+
+        # ── Tier 4: og:description meta tag as last resort ────────────────────
+        if not detail.full_description:
+            for meta_sel in ["meta[property='og:description']", "meta[name='description']"]:
+                og = doc.select_one(meta_sel)
+                if og:
+                    content = og.get("content", "").strip()
+                    if len(content) > 40:
+                        detail.full_description = _trunc(content, MAX_DESC_LEN)
+                        break
+
         img = doc.select_one("meta[property='og:image']")
         if img:
             detail.image_url = _trunc(img.get("content", ""), MAX_URL_LEN)
+
+        # ── Generate 8-sentence Gemma description from scraped agenda text ────
+        # Pass whatever we extracted as context so Gemma can rewrite it into
+        # polished, grammatically correct prose (not just store the raw HTML text).
+        if detail.full_description and len(detail.full_description.strip()) > 40:
+            print(f"  🦙 eChai: enhancing scraped description via Gemma...")
+            llm_desc = generate_description_from_context(
+                title=event.name,
+                platform=event.platform,
+                context=detail.full_description,
+            )
+            if llm_desc:
+                detail.full_description = _trunc(sanitize_for_display(llm_desc), MAX_DESC_LEN)
+
         return detail
 
     def _parse_biec_detail(self, doc, event: EventFromDB) -> ScrapedDetail:
+        """
+        BIEC event detail page structure (confirmed from live HTML):
+
+          <section style="padding-bottom: 50px;">
+            <div class="container">
+              <div class="row">
+
+                <!-- Column 1: EVENT DETAILS -->
+                <div class="col-lg-4">
+                  <h4 class="eve-detail">EVENT DETAILS</h4>
+                  <b>Start:</b>  <p>January 21 @ 9:00 am</p>
+                  <b>End:</b>    <p>January 25 @ 6:00 pm</p>
+                  <b>Website:</b>
+                  <p><a href="#" onclick="window.open(&quot;https://www.imtex.in/&quot;);...">
+                  </a></p>
+                </div>
+
+                <!-- Column 2: VENUE -->
+                <div class="col-lg-4">
+                  <h4 class="eve-venue">VENUE</h4>
+                  <b>BIEC</b>                        ← bare name without colon
+                  <p>10th Mile, Tumkur Road...</p>   ← address (first <p> sibling)
+                  <b>Phone:</b><p>...</p>
+                  <b>Email:</b><p>...</p>
+                  <b>Website:</b><p>...</p>
+                </div>
+
+                <!-- Column 3: ORGANIZER -->
+                <div class="col-lg-4">
+                  <h4 class="eve-org">ORGANIZER</h4>
+                  <p><b>IMTMA</b></p>                ← org inside <p><b>
+                  <b>Website:</b><p>...</p>
+                </div>
+
+              </div>
+            </div>
+          </section>
+
+        Strategy (4 tiers):
+          Tier 1: Fetch the EXTERNAL event website (e.g. imtex.in, tooltech.in) linked
+                  in the eve-detail column — this has the richest description content.
+          Tier 2: Build a rich structured context from all scraped BIEC fields:
+                  dates, venue (city only, no street address), organizer, og:description.
+          Tier 3: Pass the best available context to Gemma for 8-sentence description.
+          Tier 4: Fall back to title-only Gemma generation.
+        """
         detail = ScrapedDetail(event_id=event.id)
-        for sel in [
-            ".event-description", ".event-details p",
-            "#about p", ".content p", "main p",
-        ]:
-            el = doc.select_one(sel)
-            if el:
-                text = _clean_to_plain_text(el.get_text())
-                if len(text) > 40:
-                    detail.full_description = _trunc(text, MAX_DESC_LEN)
+        context_parts = []   # structured fields for Gemma
+        ext_url = ""         # external event website (imtex.in etc.)
+
+        # ── Column 1: EVENT DETAILS (h4.eve-detail) ──────────────────────────
+        detail_h4 = doc.find("h4", class_="eve-detail")
+        if detail_h4:
+            col = detail_h4.parent
+            pairs = _biec_extract_label_pairs(col)
+
+            if pairs.get("Start"):
+                context_parts.append(f"Dates: {pairs['Start']} to {pairs.get('End', '(see event)')}")
+            elif pairs.get("End"):
+                context_parts.append(f"End: {pairs['End']}")
+
+            # External event URL — e.g. https://www.imtex.in/
+            # This is our BEST source of rich description text.
+            ext_url = _biec_extract_onclick_url(col)
+
+        # ── Column 2: VENUE (h4.eve-venue) ───────────────────────────────────
+        venue_name = ""
+        venue_city = "Bengaluru, Karnataka"   # BIEC is always in Bengaluru
+
+        venue_h4 = doc.find("h4", class_="eve-venue")
+        if venue_h4:
+            col = venue_h4.parent
+
+            # Venue name: first <b> without a colon (bare label, not a field header)
+            for b_tag in col.find_all("b"):
+                text = b_tag.get_text(strip=True)
+                if text and ":" not in text:
+                    venue_name = text
                     break
+
+            # Only include city in context, not full street address (to avoid
+            # sanitize_for_display stripping address-like fragments from Gemma output)
+            if venue_name:
+                context_parts.append(f"Venue: {venue_name}, {venue_city}")
+            else:
+                context_parts.append(f"Venue: BIEC, {venue_city}")
+
+        # ── Column 3: ORGANIZER (h4.eve-org) ─────────────────────────────────
+        org_name = ""
+        org_h4 = doc.find("h4", class_="eve-org")
+        if org_h4:
+            col = org_h4.parent
+            # Pattern: <p><b>IMTMA</b></p>
+            for p_tag in col.find_all("p"):
+                b_in_p = p_tag.find("b")
+                if b_in_p:
+                    org_name = b_in_p.get_text(strip=True)
+                    if org_name:
+                        context_parts.append(f"Organizer: {org_name}")
+                        detail.organizer = _trunc(org_name, MAX_SHORT_LEN)
+                        break
+            # If organizer not in <p><b>, check for bare <b> without colon
+            if not org_name:
+                for b_tag in col.find_all("b"):
+                    t = b_tag.get_text(strip=True)
+                    if t and ":" not in t:
+                        context_parts.append(f"Organizer: {t}")
+                        detail.organizer = _trunc(t, MAX_SHORT_LEN)
+                        break
+
+        if not detail.organizer and venue_name:
+            detail.organizer = _trunc(venue_name, MAX_SHORT_LEN)
+
+        # ── og:image ──────────────────────────────────────────────────────────
         img = doc.select_one("meta[property='og:image']")
         if img:
             detail.image_url = _trunc(img.get("content", ""), MAX_URL_LEN)
+
+        # ── og:description / meta description — extra context ─────────────────
+        for meta_sel in ["meta[property='og:description']", "meta[name='description']"]:
+            og = doc.select_one(meta_sel)
+            if og:
+                og_text = og.get("content", "").strip()
+                if len(og_text) > 30:
+                    context_parts.append(f"About (from page): {og_text[:400]}")
+                break
+
+        # ── Tier 1: Fetch external event website for real description ─────────
+        # BIEC pages themselves have no prose — but the linked external site
+        # (e.g. imtex.in, tooltech.in) usually has full event description content.
+        external_desc = ""
+        if ext_url:
+            print(f"  🌐 BIEC: fetching external event site: {ext_url}")
+            try:
+                ext_resp = self.fetch_with_retry(ext_url)
+                if ext_resp and ext_resp.text:
+                    ext_doc = BeautifulSoup(ext_resp.text, "html.parser")
+                    # Try common description selectors on the external site
+                    external_desc = _extract_description_from_soup(ext_doc, min_len=80)
+                    if external_desc:
+                        print(f"  ✅ BIEC: got {len(external_desc)} chars from external site")
+                        context_parts.append(
+                            f"Event description (from official site):\n"
+                            f"{external_desc[:800]}"
+                        )
+                    else:
+                        # Try og:description on external site
+                        og = ext_doc.select_one(
+                            "meta[property='og:description'], meta[name='description']"
+                        )
+                        if og:
+                            c = og.get("content", "").strip()
+                            if len(c) > 40:
+                                context_parts.append(f"About (official site): {c[:400]}")
+                                external_desc = c
+            except Exception as e:
+                print(f"  ⚠️  BIEC: external site fetch failed: {e}")
+
+        # ── Tier 2+3: Build context string and call Gemma ─────────────────────
+        if context_parts:
+            context_str = "\n".join(context_parts)
+            has_rich = bool(external_desc) or len(context_str) > 200
+
+            print(
+                f"  🦙 BIEC: generating description from {len(context_parts)} fields "
+                f"({'rich' if has_rich else 'sparse'} context, {len(context_str)} chars)..."
+            )
+
+            llm_desc = generate_description_from_context(
+                title=event.name,
+                platform=event.platform,
+                context=context_str,
+            )
+            if llm_desc:
+                detail.full_description = _trunc(
+                    sanitize_for_display(llm_desc), MAX_DESC_LEN
+                )
+                print(f"  ✅ BIEC: description generated ({len(detail.full_description)} chars)")
+            else:
+                print(f"  ⚠️  BIEC: Gemma returned empty, will fall back to title-only")
+        else:
+            print(f"  ⚠️  BIEC: no structured data found on page")
+
         return detail
 
     def _parse_hitex_detail(self, doc, event: EventFromDB) -> ScrapedDetail:
@@ -641,6 +1015,45 @@ def _is_noisy_description(text: str) -> bool:
     if len(lines) > 5 and short_lines > len(lines) * 0.6:
         return True
     return False
+
+
+def _extract_hasgeek_section(markdown_div, section_id_fragment: str) -> str:
+    """
+    Extract paragraph text from a named section inside HasGeek's div.markdown.
+
+    HasGeek headings have ids like "h:abstract", "h:target-audience" etc.
+    This finds the matching <h2> and collects all <p> and <li> text until
+    the next <h1> or <h2>, returning them joined as a single string.
+
+    Example: section_id_fragment="abstract" matches id="h:abstract"
+    """
+    target_heading = None
+    for heading in markdown_div.find_all(["h1", "h2"]):
+        if section_id_fragment.lower() in heading.get("id", "").lower():
+            target_heading = heading
+            break
+
+    if not target_heading:
+        return ""
+
+    paras = []
+    for sibling in target_heading.next_siblings:
+        if not hasattr(sibling, "name"):
+            continue
+        # Stop at the next heading
+        if sibling.name in ("h1", "h2"):
+            break
+        if sibling.name == "p":
+            text = _clean_to_plain_text(sibling.get_text())
+            if len(text) > 20:
+                paras.append(text)
+        elif sibling.name in ("ul", "ol"):
+            for li in sibling.find_all("li"):
+                text = _clean_to_plain_text(li.get_text())
+                if len(text) > 10:
+                    paras.append(text)
+
+    return " ".join(paras).strip()
 
 
 def _extract_description_from_soup(soup, min_len=60, max_len=3000) -> str:

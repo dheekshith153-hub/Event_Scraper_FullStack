@@ -5,6 +5,7 @@ Mirrors: pkg/utils/dateutil.go, pkg/utils/ollama_classify.go
 """
 
 import json
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -243,8 +244,6 @@ def is_biec_tech_event(title: str, website: str) -> bool:
 #  OLLAMA CLASSIFIER (mirrors pkg/utils/ollama_classify.go)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-import os
-
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma2:2b")
 
@@ -404,6 +403,8 @@ def generate_description_from_title(title: str, platform: str) -> str:
     """
     Generate a 6-sentence description from the event title using Ollama.
     Produces website-ready copy: professional English, no PII whatsoever.
+
+    Prefer generate_description_from_context() when scraped data is available.
     """
     if not _is_ollama_reachable():
         return ""
@@ -446,7 +447,7 @@ def generate_description_from_title(title: str, platform: str) -> str:
         return ""
 
     # Clean markdown artifacts the LLM may still produce
-    result = re.sub(r"\*{1,2}|#{1,3} ?|- {1}", "", result)
+    result = re.sub(r"\*{1,2}|#{1,6}\s?|- {1}", "", result)
 
     lines = [line.strip() for line in result.split("\n") if line.strip()]
     clean_lines = []
@@ -460,5 +461,125 @@ def generate_description_from_title(title: str, platform: str) -> str:
             clean_lines.append(line)
         if len(clean_lines) >= 6:
             break
+
+    return "\n".join(clean_lines)
+
+
+def generate_description_from_context(title: str, platform: str, context: str) -> str:
+    """
+    Generate an 8-sentence, website-ready description using rich scraped context
+    (agenda/about text, venue, organizer, dates, etc.) via Gemma 2:2b.
+
+    This is the preferred function when any real event content has been scraped.
+    It produces far more accurate, relevant copy than the title-only version.
+
+    Args:
+        title:    The event title (used as primary anchor for the model).
+        platform: Source platform name, e.g. "echai" or "biec".
+        context:  Raw scraped text — agenda, about section, venue, organizer,
+                  dates, or any combination. Trimmed to 1800 chars internally.
+
+    Returns:
+        8-sentence clean description string, or "" on failure.
+        Falls back to generate_description_from_title() if Ollama is unreachable
+        or the model returns garbage.
+
+    Notes on sparse context (e.g. BIEC which has no prose description):
+        When context contains only structured fields (dates, venue, organizer),
+        the prompt asks Gemma to use its own knowledge about the event category
+        to fill in meaningful sentences — this is explicitly permitted for
+        industry facts (not specific claims like prices or speaker names).
+    """
+    if not context or not context.strip():
+        return generate_description_from_title(title, platform)
+
+    if not _is_ollama_reachable():
+        return ""
+
+    # Keep prompt within gemma2:2b's comfortable context window.
+    # 1800 chars allows richer external-site descriptions to be included.
+    context = context[:1800].strip()
+
+    # Detect whether context is sparse (only structured metadata) or rich (has prose)
+    # A context with real description sentences will have sentences ending in punctuation
+    is_sparse = len(context) < 250 and "description" not in context.lower()
+
+    if is_sparse:
+        # For sparse context (BIEC-style: just dates/venue/organizer), allow
+        # Gemma to use general industry knowledge to write meaningful sentences,
+        # anchored to the specific facts provided.
+        extra_instruction = (
+            "The context above contains only structured event metadata (not a prose description).\n"
+            "Use the event title and the provided facts as your anchor, and draw on general\n"
+            "industry knowledge to write informative sentences about what this type of event\n"
+            "covers, who attends, and why it matters. Do NOT invent specific claims like\n"
+            "ticket prices, speaker names, or visitor numbers.\n"
+        )
+    else:
+        extra_instruction = (
+            "Use the scraped event information above as your primary source.\n"
+            "Rephrase and expand it into polished English — do not copy it verbatim.\n"
+        )
+
+    prompt = (
+        "You are writing copy for a professional tech and industry event listing website.\n"
+        "Write exactly 8 clear, informative sentences describing this event.\n\n"
+        "STRICT OUTPUT RULES — any violation makes the output unusable:\n"
+        "- Plain English prose only. No bullet points, no markdown, no numbered lists.\n"
+        "- DO NOT include phone numbers, mobile numbers, or contact details of any kind.\n"
+        "- DO NOT include physical street addresses, building numbers, or PIN codes.\n"
+        "- DO NOT include email addresses or website URLs in your output.\n"
+        "- DO NOT make up specific ticket prices, exhibitor counts, or speaker names.\n"
+        "- Each sentence must be grammatically correct and end with a full stop.\n"
+        "- Sentences should cover: what the event is about, its industry significance,\n"
+        "  who should attend, key topics or product categories on display, the organizer,\n"
+        "  the city where it is held, and why it is worth attending.\n\n"
+        f"Event title: {title}\n"
+        f"Platform: {platform}\n\n"
+        f"Event information:\n{context}\n\n"
+        f"{extra_instruction}\n"
+        "Write exactly 8 sentences now:"
+    )
+
+    payload = {
+        "model": OLLAMA_MODEL,
+        "prompt": prompt,
+        "stream": False,
+        # num_predict=600 fits ~8 sentences with comfortable headroom
+        "options": {"temperature": 0.3, "num_predict": 600},
+    }
+
+    try:
+        resp = http_requests.post(
+            f"{OLLAMA_URL}/api/generate",
+            json=payload,
+            timeout=90,       # 90s: Gemma 2:2b on CPU can be slow with richer prompts
+        )
+        resp.raise_for_status()
+        result = resp.json().get("response", "").strip()
+    except Exception as e:
+        print(f"   ⚠️  LLM context-describe error: {e}")
+        return generate_description_from_title(title, platform)
+
+    # Strip any markdown artifacts the model still produces
+    result = re.sub(r"\*{1,2}|#{1,6}\s?|- {1}", "", result)
+
+    lines = [line.strip() for line in result.split("\n") if line.strip()]
+    clean_lines = []
+    for line in lines:
+        line = re.sub(r"^\d+[\.\)]\s*", "", line)   # strip "1. " or "1) "
+        line = line.strip()
+        if not line or len(line.split()) < 4:
+            continue
+        line = line[0].upper() + line[1:]
+        if line[-1] not in ".!?":
+            line += "."
+        clean_lines.append(line)
+        if len(clean_lines) >= 8:
+            break
+
+    if not clean_lines:
+        print(f"   ⚠️  LLM context-describe returned no usable lines, falling back to title-only")
+        return generate_description_from_title(title, platform)
 
     return "\n".join(clean_lines)

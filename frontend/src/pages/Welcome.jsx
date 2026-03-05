@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { apiFetch } from "../api/client";
 
 function Counter({ end, suffix = "", duration = 2000 }) {
     const [count, setCount] = useState(0);
@@ -95,6 +96,11 @@ const Icons = {
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253" />
         </svg>
     ),
+    flag: (size = 20) => (
+        <svg width={size} height={size} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 3v18m0-18l9 4 9-4v13l-9 4-9-4V3z" />
+        </svg>
+    ),
 };
 
 const CATEGORIES = [
@@ -105,6 +111,12 @@ const CATEGORIES = [
     { name: "Pitch Nights", icon: Icons.rocket, color: "#92140c" },
     { name: "Summits", icon: Icons.chart, color: "#1e1e24" },
     { name: "Webinars", icon: Icons.globe, color: "#92140c" },
+];
+
+// ── Region badges shown in hero ───────────────────────────────────────────
+const REGIONS = [
+    { label: "India", cities: "Bengaluru · Mumbai · Hyderabad · Pune · Delhi" },
+    { label: "USA", cities: "San Francisco · New York · Seattle · Austin · Boston" },
 ];
 
 function FeatureCard({ icon, title, desc, accent }) {
@@ -179,14 +191,107 @@ function Step({ num, title, desc }) {
     );
 }
 
+
+// ── USA cities set (matches city_normalized values from the API) ──────────
+const USA_CITIES = new Set([
+    "New York", "San Francisco", "Seattle", "Austin", "Boston",
+    "Chicago", "Los Angeles", "Denver", "Atlanta",
+]);
+
+function platformToType(platform, title = "") {
+    const t = title.toLowerCase();
+    if (t.includes("hackathon")) return "Hackathon";
+    if (t.includes("workshop")) return "Workshop";
+    if (t.includes("summit")) return "Summit";
+    if (t.includes("conf")) return "Conference";
+    if (t.includes("expo") || t.includes("exhibition")) return "Expo";
+    if (t.includes("pitch")) return "Pitch Night";
+    switch (platform) {
+        case "echai": return "Meetup";
+        case "hasgeek": return "Meetup";
+        case "meetup": return "Meetup";
+        case "biec": return "Expo";
+        case "allevents": return "Conference";
+        default: return "Event";
+    }
+}
+
+function formatHeroDate(event) {
+    const raw = event.date_time || event.date || "";
+    if (!raw) return "";
+    if (/^d{4}-d{2}-d{2}/.test(raw)) {
+        try {
+            const d = new Date(raw);
+            return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+        } catch { }
+    }
+    const trimmed = raw.split(" - ")[0].split("–")[0].trim();
+    return trimmed.length > 20 ? trimmed.slice(0, 20) + "…" : trimmed;
+}
+
+function pickHeroEvents(events) {
+    if (!events || events.length === 0) return [];
+    const withImage = events.filter(e => e.image_url);
+    const noImage = events.filter(e => !e.image_url);
+    const pool = [...withImage, ...noImage];
+    const usa = pool.filter(e => USA_CITIES.has(e.city_normalized));
+    const india = pool.filter(e => !USA_CITIES.has(e.city_normalized));
+    const picked = []; const usedIds = new Set();
+    const take = (arr) => { for (const e of arr) { if (!usedIds.has(e.id)) { picked.push(e); usedIds.add(e.id); return; } } };
+    take(usa); take(india); take(india.length > 1 ? india : usa.length > 1 ? usa : pool);
+    for (const e of pool) { if (picked.length >= 3) break; if (!usedIds.has(e.id)) { picked.push(e); usedIds.add(e.id); } }
+    return picked.slice(0, 3);
+}
+
+function CardSkeleton({ style }) {
+    return (
+        <div style={{ background: "#fff8f0", borderRadius: 16, padding: 20, width: 220, boxShadow: "0 20px 40px -20px rgba(30,30,36,0.15), 0 0 0 1px rgba(146,20,12,0.07)", ...style }}>
+            {[80, 60, 40, 30].map((w, i) => (
+                <div key={i} style={{ height: i === 0 ? 14 : 10, width: w + "%", borderRadius: 6, marginBottom: i === 3 ? 0 : 10, background: "linear-gradient(90deg,rgba(146,20,12,0.06) 25%,rgba(146,20,12,0.12) 50%,rgba(146,20,12,0.06) 75%)", backgroundSize: "200% 100%", animation: "shimmer 1.4s infinite" }} />
+            ))}
+        </div>
+    );
+}
+// ── Region pill shown under the hero headline ─────────────────────────────
+function RegionPill({ label, cities }) {
+    return (
+        <div style={{
+            display: "inline-flex", flexDirection: "column",
+            padding: "8px 14px", borderRadius: 10,
+            background: "rgba(146, 20, 12, 0.04)",
+            border: "1px solid rgba(146, 20, 12, 0.12)",
+            marginRight: 8, marginBottom: 8,
+        }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: "#92140c", letterSpacing: "0.06em", textTransform: "uppercase" }}>{label}</span>
+            <span style={{ fontSize: 10, color: "#1e1e24", opacity: 0.55, marginTop: 2, letterSpacing: "0.02em" }}>{cities}</span>
+        </div>
+    );
+}
+
 export default function Welcome() {
     const { isAuthed, user } = useAuth();
     const [scrollY, setScrollY] = useState(0);
+    const [heroEvents, setHeroEvents] = useState([]);   // real events for hero cards
+    const [heroLoading, setHeroLoading] = useState(true);
 
+    // Scroll listener
     useEffect(() => {
         const onScroll = () => setScrollY(window.scrollY);
         window.addEventListener("scroll", onScroll, { passive: true });
         return () => window.removeEventListener("scroll", onScroll);
+    }, []);
+
+    // Fetch real events for hero cards on mount — no auth required
+    useEffect(() => {
+        apiFetch("/api/events?limit=20&page=1")
+            .then(data => {
+                setHeroEvents(pickHeroEvents(data.events || []));
+            })
+            .catch(() => {
+                // Silently fail — cards just stay hidden (no hardcoded fallbacks)
+                setHeroEvents([]);
+            })
+            .finally(() => setHeroLoading(false));
     }, []);
 
     return (
@@ -248,6 +353,7 @@ export default function Welcome() {
             <section style={{ maxWidth: 1200, margin: "0 auto", padding: "72px 24px 0" }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 60, alignItems: "center" }}>
                     <div>
+                        {/* Live badge */}
                         <div style={{
                             display: "inline-flex", alignItems: "center", gap: 8,
                             padding: "6px 14px", borderRadius: 40,
@@ -258,6 +364,7 @@ export default function Welcome() {
                             Live · Updated daily
                         </div>
 
+                        {/* Headline — India & USA */}
                         <h1 style={{
                             fontFamily: "'Cormorant Garamond', serif",
                             fontSize: "clamp(2.5rem, 5vw, 4rem)",
@@ -265,12 +372,21 @@ export default function Welcome() {
                             letterSpacing: "-0.02em", marginBottom: 20, fontWeight: 500,
                         }}>
                             Every tech event<br />
-                            across <span style={{ color: "#92140c", fontStyle: "italic" }}>India,</span><br />
+                            across{" "}
+                            <span style={{ color: "#92140c", fontStyle: "italic" }}>India & USA</span>
+                            ,<br />
                             unified.
                         </h1>
 
-                        <p style={{ fontSize: "0.95rem", color: "#1e1e24", lineHeight: 1.8, maxWidth: 440, marginBottom: 36, opacity: 0.7, letterSpacing: "0.02em" }}>
-                            We track tech meetups, hackathons, developer conferences, and founder gatherings across India's top tech cities — so you always know what's happening.
+                        {/* Region pills */}
+                        <div style={{ marginBottom: 20 }}>
+                            {REGIONS.map(r => <RegionPill key={r.label} {...r} />)}
+                        </div>
+
+                        <p style={{ fontSize: "0.95rem", color: "#1e1e24", lineHeight: 1.8, maxWidth: 460, marginBottom: 36, opacity: 0.7, letterSpacing: "0.02em" }}>
+                            We track tech meetups, hackathons, developer conferences, and founder gatherings
+                            across India's top tech cities and major US tech hubs — so you always know what's
+                            happening, wherever you are.
                         </p>
 
                         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
@@ -307,53 +423,122 @@ export default function Welcome() {
                         </div>
                     </div>
 
-                    {/* Right: floating preview cards */}
+                    {/* Right: floating preview cards — REAL DATA from /api/events */}
                     <div style={{ position: "relative", height: 480, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        {/* Glow orb */}
                         <div style={{
                             position: "absolute", width: 360, height: 360, borderRadius: "50%",
                             background: "radial-gradient(circle, rgba(146, 20, 12, 0.05) 0%, transparent 70%)",
                             filter: "blur(40px)",
                         }} />
 
-                        {/* Main card */}
-                        <div style={{
-                            position: "absolute", left: "50%", top: "50%",
-                            transform: "translate(-50%, -50%)",
-                            background: "#fff8f0", borderRadius: 20,
-                            boxShadow: "0 30px 60px -30px rgba(30, 30, 36, 0.4), 0 0 0 1px rgba(146, 20, 12, 0.1)",
-                            padding: 24, width: 260,
-                            animation: "float 7s ease-in-out infinite",
-                        }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-                                <div style={{ padding: "3px 10px", borderRadius: 20, background: "rgba(146,20,12,0.08)", border: "1px solid rgba(146,20,12,0.15)", fontSize: 10, fontWeight: 500, color: "#92140c", letterSpacing: "0.04em" }}>
-                                    Conference
-                                </div>
-                                <div style={{ marginLeft: "auto", background: "rgba(146, 20, 12, 0.1)", color: "#92140c", fontSize: 10, padding: "3px 8px", borderRadius: 20, letterSpacing: "0.02em" }}>Free</div>
-                            </div>
-                            <div style={{ fontSize: 14, fontWeight: 500, color: "#1e1e24", lineHeight: 1.4, marginBottom: 10, fontFamily: "'Cormorant Garamond', serif", letterSpacing: "-0.01em" }}>
-                                India Tech Founders Summit 2025
-                            </div>
-                            <div style={{ fontSize: 11, color: "#1e1e24", opacity: 0.7, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                                <span style={{ color: "#92140c", opacity: 0.5, display: "flex" }}>{Icons.pin(10)}</span>
-                                Koramangala, Bengaluru
-                            </div>
-                            <div style={{ fontSize: 11, color: "#92140c", fontWeight: 500, marginBottom: 14 }}>Mar 15, 2025</div>
-                            <div style={{ padding: "9px 0", borderRadius: 8, background: "#1e1e24", textAlign: "center", fontSize: 12, fontWeight: 400, color: "#fff8f0", border: "1px solid #92140c", letterSpacing: "0.05em" }}>
-                                View event
-                            </div>
-                        </div>
+                        {heroLoading ? (
+                            /* ── Skeletons while fetching ── */
+                            <>
+                                <CardSkeleton style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: 260 }} />
+                                <CardSkeleton style={{ position: "absolute", top: "12%", right: "0%", transform: "rotate(2deg)" }} />
+                                <CardSkeleton style={{ position: "absolute", bottom: "10%", left: "-5%", transform: "rotate(-2deg)" }} />
+                            </>
+                        ) : heroEvents.length > 0 ? (
+                            /* ── Real event cards ── */
+                            <>
+                                {/* Center main card — event [0] */}
+                                {heroEvents[0] && (() => {
+                                    const ev = heroEvents[0];
+                                    const isUSA = USA_CITIES.has(ev.city_normalized);
+                                    const accent = isUSA ? "#1e1e24" : "#92140c";
+                                    return (
+                                        <a
+                                            href={ev.website}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{
+                                                position: "absolute", left: "50%", top: "50%",
+                                                transform: "translate(-50%, -50%)",
+                                                background: "#fff8f0", borderRadius: 20,
+                                                boxShadow: "0 30px 60px -30px rgba(30,30,36,0.4), 0 0 0 1px rgba(146,20,12,0.1)",
+                                                padding: 24, width: 260,
+                                                animation: "float 7s ease-in-out infinite",
+                                                textDecoration: "none", display: "block",
+                                            }}
+                                        >
+                                            {/* Event image if available */}
+                                            {ev.image_url && (
+                                                <div style={{
+                                                    width: "100%", height: 90, borderRadius: 10,
+                                                    marginBottom: 12, overflow: "hidden",
+                                                    background: "rgba(146,20,12,0.04)",
+                                                }}>
+                                                    <img
+                                                        src={ev.image_url}
+                                                        alt=""
+                                                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                                        onError={e => { e.currentTarget.parentNode.style.display = "none"; }}
+                                                    />
+                                                </div>
+                                            )}
+                                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                                                <div style={{ padding: "3px 10px", borderRadius: 20, background: `${accent}0d`, border: `1px solid ${accent}22`, fontSize: 10, fontWeight: 500, color: accent, letterSpacing: "0.04em" }}>
+                                                    {platformToType(ev.platform, ev.event_name)}
+                                                </div>
+                                                {isUSA && (
+                                                    <div style={{ marginLeft: "auto", background: "rgba(146,20,12,0.08)", color: "#92140c", fontSize: 9, padding: "2px 7px", borderRadius: 20, letterSpacing: "0.04em", fontWeight: 500 }}>USA</div>
+                                                )}
+                                            </div>
+                                            <div style={{ fontSize: 13, fontWeight: 500, color: "#1e1e24", lineHeight: 1.4, marginBottom: 8, fontFamily: "'Cormorant Garamond', serif", letterSpacing: "-0.01em", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                                                {ev.event_name}
+                                            </div>
+                                            <div style={{ fontSize: 11, color: "#1e1e24", opacity: 0.65, marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                                                <span style={{ color: accent, opacity: 0.5, display: "flex", flexShrink: 0 }}>{Icons.pin(10)}</span>
+                                                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                                    {ev.city_normalized || ev.location}
+                                                </span>
+                                            </div>
+                                            {formatHeroDate(ev) && (
+                                                <div style={{ fontSize: 11, color: "#92140c", fontWeight: 500, marginBottom: 12 }}>
+                                                    {formatHeroDate(ev)}
+                                                </div>
+                                            )}
+                                            <div style={{ padding: "9px 0", borderRadius: 8, background: "#1e1e24", textAlign: "center", fontSize: 11, fontWeight: 400, color: "#fff8f0", border: "1px solid #92140c", letterSpacing: "0.05em" }}>
+                                                View event
+                                            </div>
+                                        </a>
+                                    );
+                                })()}
 
-                        <PreviewCard title="React India Conf 2025" type="Workshop" location="Pune, MH" date="Apr 2, 2025" color="#1e1e24"
-                            style={{ position: "absolute", top: "12%", right: "0%", transform: "rotate(2deg)", animation: "float 5s ease-in-out infinite" }} />
+                                {/* Top-right card — event [1] */}
+                                {heroEvents[1] && (
+                                    <PreviewCard
+                                        title={heroEvents[1].event_name}
+                                        type={platformToType(heroEvents[1].platform, heroEvents[1].event_name)}
+                                        location={heroEvents[1].city_normalized || heroEvents[1].location}
+                                        date={formatHeroDate(heroEvents[1])}
+                                        color={USA_CITIES.has(heroEvents[1].city_normalized) ? "#1e1e24" : "#92140c"}
+                                        style={{ position: "absolute", top: "12%", right: "0%", transform: "rotate(2deg)", animation: "float 5s ease-in-out infinite" }}
+                                    />
+                                )}
 
-                        <PreviewCard title="Startup Pitch Night" type="Pitch Night" location="Mumbai, MH" date="Mar 22, 2025" color="#92140c"
-                            style={{ position: "absolute", bottom: "10%", left: "-5%", transform: "rotate(-2deg)", animation: "float 6s ease-in-out infinite" }} />
+                                {/* Bottom-left card — event [2] */}
+                                {heroEvents[2] && (
+                                    <PreviewCard
+                                        title={heroEvents[2].event_name}
+                                        type={platformToType(heroEvents[2].platform, heroEvents[2].event_name)}
+                                        location={heroEvents[2].city_normalized || heroEvents[2].location}
+                                        date={formatHeroDate(heroEvents[2])}
+                                        color={USA_CITIES.has(heroEvents[2].city_normalized) ? "#1e1e24" : "#92140c"}
+                                        style={{ position: "absolute", bottom: "10%", left: "-5%", transform: "rotate(-2deg)", animation: "float 6s ease-in-out infinite" }}
+                                    />
+                                )}
+                            </>
+                        ) : null}
 
+                        {/* Counter badge — always visible */}
                         <div style={{
                             position: "absolute", top: "5%", left: "5%",
                             background: "#fff8f0", borderRadius: 12,
-                            boxShadow: "0 15px 30px -15px rgba(30, 30, 36, 0.2), 0 0 0 1px rgba(146, 20, 12, 0.1)",
+                            boxShadow: "0 15px 30px -15px rgba(30,30,36,0.2), 0 0 0 1px rgba(146,20,12,0.1)",
                             padding: "12px 18px", animation: "float 8s ease-in-out infinite",
+                            zIndex: 2,
                         }}>
                             <div style={{ fontSize: 22, fontWeight: 500, color: "#92140c", fontFamily: "'Cormorant Garamond', serif", lineHeight: 1 }}>500+</div>
                             <div style={{ fontSize: 10, color: "#1e1e24", opacity: 0.6, letterSpacing: "0.02em" }}>events tracked</div>
@@ -362,7 +547,7 @@ export default function Welcome() {
                 </div>
             </section>
 
-            {/* ── STATS BAR ── */}
+            {/* ── STATS BAR — updated for 2 countries ── */}
             <section style={{ maxWidth: 1200, margin: "80px auto 0", padding: "0 24px" }}>
                 <div style={{
                     background: "#fff8f0", borderRadius: 16, padding: "40px 48px",
@@ -371,8 +556,8 @@ export default function Welcome() {
                 }}>
                     {[
                         { value: 500, suffix: "+", label: "Events tracked" },
-                        { value: 7, suffix: "", label: "Cities covered" },
-                        { value: 24, suffix: "h", label: "Update cycle" },
+                        { value: 2, suffix: "", label: "Countries covered" },
+                        { value: 15, suffix: "+", label: "Cities covered" },
                         { value: 100, suffix: "%", label: "Free access" },
                     ].map((s, i) => (
                         <div key={i} style={{ textAlign: "center", borderRight: i < 3 ? "1px solid rgba(146, 20, 12, 0.1)" : "none", padding: "0 24px" }}>
@@ -385,24 +570,67 @@ export default function Welcome() {
                 </div>
             </section>
 
+            {/* ── COVERAGE MAP STRIP ── */}
+            <section style={{ maxWidth: 1200, margin: "48px auto 0", padding: "0 24px" }}>
+                <div style={{
+                    background: "#fff8f0", borderRadius: 16, padding: "28px 40px",
+                    border: "1px solid rgba(146, 20, 12, 0.1)",
+                    display: "grid", gridTemplateColumns: "1fr 1fr", gap: 40,
+                }}>
+                    {[
+                        {
+                            country: "India",
+                            cities: ["Bengaluru", "Mumbai", "Hyderabad", "Pune", "Delhi NCR", "Chennai"],
+                        },
+                        {
+                            country: "USA",
+                            cities: ["San Francisco", "New York", "Seattle", "Austin", "Boston"],
+                            badge: "New",
+                        },
+                    ].map(({ country, cities, badge }) => (
+                        <div key={country}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1.05rem", fontWeight: 600, color: "#1e1e24", letterSpacing: "-0.01em" }}>
+                                    {country}
+                                </span>
+                                {badge && (
+                                    <span style={{ padding: "2px 8px", borderRadius: 20, background: "#92140c", color: "#fff8f0", fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                                        {badge}
+                                    </span>
+                                )}
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                                {cities.map(city => (
+                                    <span key={city} style={{
+                                        padding: "4px 12px", borderRadius: 20, fontSize: 11,
+                                        background: "rgba(146, 20, 12, 0.04)",
+                                        border: "1px solid rgba(146, 20, 12, 0.12)",
+                                        color: "#1e1e24", letterSpacing: "0.02em",
+                                    }}>{city}</span>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </section>
+
             {/* ── FEATURES ── */}
             <section style={{ maxWidth: 1200, margin: "96px auto 0", padding: "0 24px" }}>
                 <div style={{ textAlign: "center", marginBottom: 56 }}>
-                    <div style={{ fontSize: 10, fontWeight: 400, color: "#92140c", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 12 }}>Why EventScraper</div>
                     <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(1.8rem, 3vw, 2.8rem)", color: "#1e1e24", letterSpacing: "-0.02em", marginBottom: 14, fontWeight: 500 }}>
                         Built for those who<br />actually attend
                     </h2>
                     <p style={{ fontSize: "0.9rem", color: "#1e1e24", maxWidth: 480, margin: "0 auto", lineHeight: 1.8, opacity: 0.7, letterSpacing: "0.02em" }}>
-                        One place to search, filter, save and track tech events across every major city in India's tech ecosystem.
+                        One place to search, filter, save and track tech events across every major city in India's and America's tech ecosystems.
                     </p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
-                    <FeatureCard icon={Icons.search} title="Unified Search" desc="Search across hundreds of events at once. No more hopping between websites — everything is aggregated and searchable here." accent="#92140c" />
-                    <FeatureCard icon={Icons.filter} title="Smart Filters" desc="Filter by city, date range, and event type. Find exactly what you're looking for in seconds." accent="#1e1e24" />
+                    <FeatureCard icon={Icons.search} title="Unified Search" desc="Search across hundreds of events at once. No more hopping between websites — everything across India and the USA is aggregated and searchable here." accent="#92140c" />
+                    <FeatureCard icon={Icons.filter} title="Smart Filters" desc="Filter by country, city, date range, and event type. Find exactly what you're looking for — whether it's in Bengaluru or San Francisco." accent="#1e1e24" />
                     <FeatureCard icon={Icons.bookmark} title="Save to Planner" desc="Bookmark events you're interested in and build your personal event calendar. Never lose track of a great event." accent="#92140c" />
                     <FeatureCard icon={Icons.bolt} title="Fresh Daily" desc="Our scrapers run daily so the events list is always current. New events added automatically, old ones cleaned up." accent="#1e1e24" />
                     <FeatureCard icon={Icons.refresh} title="De-duplicated" desc="The same event listed in multiple places? We detect and merge duplicates so you see clean, unique results." accent="#92140c" />
-                    <FeatureCard icon={Icons.pin} title="Location Aware" desc="Filter by tech city or state. Whether you want events in Bengaluru, Pune, Hyderabad, or Mumbai — we've got you covered." accent="#1e1e24" />
+                    <FeatureCard icon={Icons.globe} title="Global Coverage" desc="From Hyderabad to New York, Austin to Pune — we cover the cities where tech actually happens in both India and the USA." accent="#1e1e24" />
                 </div>
             </section>
 
@@ -417,7 +645,7 @@ export default function Welcome() {
                         <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
                             <Step num="01" title="Create your free account" desc="Sign up in seconds. No credit card, no spam — just a simple account to unlock full access." />
                             <div style={{ width: 1, height: 24, background: "rgba(146, 20, 12, 0.1)", marginLeft: 22 }} />
-                            <Step num="02" title="Search & filter events" desc="Use our powerful search and filters to narrow down to exactly what interests you — by date, location, or keyword." />
+                            <Step num="02" title="Search & filter events" desc="Use our powerful search and filters to narrow down to exactly what interests you — by country, date, location, or keyword." />
                             <div style={{ width: 1, height: 24, background: "rgba(146, 20, 12, 0.1)", marginLeft: 22 }} />
                             <Step num="03" title="Save & attend" desc="Bookmark events to your planner and click through to register directly on the event page." />
                         </div>
@@ -439,15 +667,17 @@ export default function Welcome() {
                                     Search events, cities, topics...
                                 </div>
                             </div>
+                            {/* Filter pills — now include USA */}
                             <div style={{ padding: "0 20px 16px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                                {["All", "Bengaluru", "Conferences", "This week"].map((f, i) => (
+                                {["All", "India", "USA", "This week"].map((f, i) => (
                                     <div key={f} style={{ padding: "4px 12px", borderRadius: 20, background: i === 0 ? "#92140c" : "transparent", color: i === 0 ? "#fff8f0" : "#1e1e24", fontSize: 11, border: "1px solid", borderColor: i === 0 ? "#92140c" : "rgba(146, 20, 12, 0.2)", letterSpacing: "0.02em" }}>{f}</div>
                                 ))}
                             </div>
+                            {/* Event list — India + USA mix */}
                             {[
-                                { title: "India SaaS Summit 2025", type: "Summit", loc: "Bengaluru, KA", color: "#92140c" },
-                                { title: "React India Conf 2025", type: "Conference", loc: "Pune, MH", color: "#1e1e24" },
-                                { title: "VC Pitch Competition", type: "Pitch Night", loc: "Mumbai, MH", color: "#92140c" },
+                                { title: "India SaaS Summit 2025", type: "Summit", loc: "Bengaluru, IN", color: "#92140c" },
+                                { title: "SF AI & Dev Conference", type: "Conference", loc: "San Francisco, CA", color: "#1e1e24" },
+                                { title: "VC Pitch Competition", type: "Pitch Night", loc: "Mumbai, IN", color: "#92140c" },
                             ].map((e, i) => (
                                 <div key={i} style={{ margin: "0 20px 12px", background: "rgba(146, 20, 12, 0.02)", borderRadius: 10, padding: "12px", border: "1px solid rgba(146, 20, 12, 0.1)", display: "flex", gap: 12, alignItems: "center" }}>
                                     <div style={{ padding: "3px 8px", borderRadius: 20, background: `${e.color}10`, border: `1px solid ${e.color}20`, fontSize: 9, fontWeight: 500, color: e.color, letterSpacing: "0.04em", whiteSpace: "nowrap", flexShrink: 0 }}>
@@ -478,7 +708,7 @@ export default function Welcome() {
                         Every kind of tech event
                     </h2>
                     <p style={{ fontSize: "0.85rem", color: "#1e1e24", marginTop: 12, opacity: 0.7, letterSpacing: "0.02em" }}>
-                        From intimate workshops to city-wide summits — all in one place.
+                        From intimate workshops to city-wide summits — across India and the USA.
                     </p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 16 }}>
@@ -501,10 +731,11 @@ export default function Welcome() {
                     <div style={{ position: "relative", zIndex: 1 }}>
                         <div style={{ fontSize: 10, fontWeight: 400, color: "#92140c", letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 20 }}>Start now — it's free</div>
                         <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "clamp(2rem, 3.5vw, 3rem)", color: "#1e1e24", letterSpacing: "-0.02em", marginBottom: 16, lineHeight: 1.15, fontWeight: 500 }}>
-                            Never miss another<br />tech event in India
+                            Never miss another<br />tech event in India or the USA
                         </h2>
-                        <p style={{ fontSize: "0.9rem", color: "#1e1e24", maxWidth: 420, margin: "0 auto 40px", lineHeight: 1.8, opacity: 0.7, letterSpacing: "0.02em" }}>
-                            Join hundreds of developers, founders, and tech professionals who use EventScraper to stay connected with India's tech community.
+                        <p style={{ fontSize: "0.9rem", color: "#1e1e24", maxWidth: 460, margin: "0 auto 40px", lineHeight: 1.8, opacity: 0.7, letterSpacing: "0.02em" }}>
+                            Join hundreds of developers, founders, and tech professionals who use EventScraper
+                            to stay connected with the global tech community — from Bengaluru to San Francisco.
                         </p>
                         {isAuthed ? (
                             <Link to="/events" style={{ display: "inline-block", padding: "16px 40px", borderRadius: 40, background: "#1e1e24", color: "#fff8f0", fontSize: 14, fontWeight: 400, textDecoration: "none", border: "1px solid #92140c", letterSpacing: "0.05em", transition: "all 0.3s" }}
@@ -535,7 +766,7 @@ export default function Welcome() {
                         <div style={{ width: 28, height: 28, borderRadius: 6, background: "#1e1e24", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "#fff8f0", border: "1px solid #92140c", fontFamily: "'Cormorant Garamond', serif" }}>E</div>
                         <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: "1rem", fontWeight: 500, color: "#1e1e24" }}>EventScraper</span>
                     </div>
-                    <div style={{ fontSize: 11, color: "#1e1e24", opacity: 0.6, letterSpacing: "0.02em" }}>© 2025 · India's Tech Event Hub</div>
+                    <div style={{ fontSize: 11, color: "#1e1e24", opacity: 0.6, letterSpacing: "0.02em" }}>© 2025 · India & USA Tech Events Hub</div>
                     <div style={{ display: "flex", gap: 20 }}>
                         <Link to="/signin" style={{ fontSize: 11, color: "#1e1e24", textDecoration: "none", opacity: 0.6, letterSpacing: "0.02em" }}>Sign in</Link>
                         <Link to="/signup" style={{ fontSize: 11, color: "#1e1e24", textDecoration: "none", opacity: 0.6, letterSpacing: "0.02em" }}>Sign up</Link>
@@ -548,11 +779,16 @@ export default function Welcome() {
                     0%, 100% { transform: translateY(0px); }
                     50% { transform: translateY(-8px); }
                 }
+                @keyframes shimmer {
+                    0%   { background-position: 200% 0; }
+                    100% { background-position: -200% 0; }
+                }
                 @media (max-width: 768px) {
                     section > div[style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
                     section > div[style*="grid-template-columns: repeat(7"] { grid-template-columns: repeat(4, 1fr) !important; }
                     section > div[style*="grid-template-columns: repeat(4"] { grid-template-columns: repeat(2, 1fr) !important; }
                     section > div[style*="grid-template-columns: repeat(3"] { grid-template-columns: 1fr !important; }
+                    section > div[style*="grid-template-columns: 1fr 1fr"][style*="28px 40px"] { grid-template-columns: 1fr !important; }
                 }
             `}</style>
         </div>

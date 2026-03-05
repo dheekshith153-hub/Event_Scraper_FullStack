@@ -109,3 +109,4 @@ class HasGeekScraper(BaseScraper):
 def _clean_space(s: str) -> str:
     s = s.replace("\u00a0", " ")
     return " ".join(s.split())
+        

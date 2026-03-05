@@ -312,26 +312,7 @@ export default function Header() {
                                 >
                                     Sign in
                                 </Link>
-                                <Link to="/signup" style={{
-                                    fontSize: 13, fontWeight: 400,
-                                    color: "#fff8f0", textDecoration: "none",
-                                    padding: "10px 24px", borderRadius: 40,
-                                    background: "#1e1e24",
-                                    border: "1px solid #92140c",
-                                    letterSpacing: "0.05em",
-                                    transition: "all 0.3s",
-                                }}
-                                    onMouseEnter={e => {
-                                        e.currentTarget.style.background = "#92140c";
-                                        e.currentTarget.style.transform = "translateY(-1px)";
-                                    }}
-                                    onMouseLeave={e => {
-                                        e.currentTarget.style.background = "#1e1e24";
-                                        e.currentTarget.style.transform = "translateY(0)";
-                                    }}
-                                >
-                                    Get started
-                                </Link>
+
                             </>
                         )}
                     </div>
